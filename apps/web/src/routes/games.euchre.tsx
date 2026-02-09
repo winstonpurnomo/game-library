@@ -164,7 +164,6 @@ function parseMode(value: string): RoomMode {
 }
 
 function getServerHttpOrigin() {
-  console.log(`meta: ${JSON.stringify(import.meta.env)}`);
   const configured = import.meta.env.VITE_SERVER_URL?.trim();
   if (configured) {
     return configured.replace(/\/$/, "");

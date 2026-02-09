@@ -1,7 +1,7 @@
-import { Link, createFileRoute } from "@tanstack/react-router"
-import { useMemo, useState } from "react"
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogClose,
@@ -10,73 +10,75 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  InputGroup,
-  InputGroupInput,
-} from "@/components/ui/input-group"
+} from "@/components/ui/dialog";
+import { InputGroup, InputGroupInput } from "@/components/ui/input-group";
 
 type Participant = {
-  id: string
-  name: string
-  score: number
-}
+  id: string;
+  name: string;
+  score: number;
+};
 
 function parseNumber(value: string, fallback: number) {
-  const parsed = Number(value)
+  const parsed = Number(value);
   if (Number.isNaN(parsed)) {
-    return fallback
+    return fallback;
   }
-  return parsed
+  return parsed;
 }
 
 function ScorekeeperRoute() {
-  const [participants, setParticipants] = useState<Participant[]>([])
-  const [nameInput, setNameInput] = useState("")
-  const [error, setError] = useState("")
-  const [instructionsOpen, setInstructionsOpen] = useState(true)
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [nameInput, setNameInput] = useState("");
+  const [error, setError] = useState("");
+  const [instructionsOpen, setInstructionsOpen] = useState(true);
 
-  const [startScoreInput, setStartScoreInput] = useState("0")
-  const [addStepInput, setAddStepInput] = useState("1")
-  const [subtractStepInput, setSubtractStepInput] = useState("1")
-  const [targetScoreInput, setTargetScoreInput] = useState("25")
-  const [allowNegative, setAllowNegative] = useState(false)
-  const [autoSort, setAutoSort] = useState(true)
+  const [startScoreInput, setStartScoreInput] = useState("0");
+  const [addStepInput, setAddStepInput] = useState("1");
+  const [subtractStepInput, setSubtractStepInput] = useState("1");
+  const [targetScoreInput, setTargetScoreInput] = useState("25");
+  const [allowNegative, setAllowNegative] = useState(false);
+  const [autoSort, setAutoSort] = useState(true);
 
-  const startScore = parseNumber(startScoreInput, 0)
-  const addStep = Math.max(1, parseNumber(addStepInput, 1))
-  const subtractStep = Math.max(1, parseNumber(subtractStepInput, 1))
-  const targetScore = Math.max(1, parseNumber(targetScoreInput, 25))
+  const startScore = parseNumber(startScoreInput, 0);
+  const addStep = Math.max(1, parseNumber(addStepInput, 1));
+  const subtractStep = Math.max(1, parseNumber(subtractStepInput, 1));
+  const targetScore = Math.max(1, parseNumber(targetScoreInput, 25));
 
   const rankedParticipants = useMemo(() => {
     if (!autoSort) {
-      return participants
+      return participants;
     }
-    return [...participants]
-      .toSorted((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-  }, [participants, autoSort])
+    return [...participants].sort(
+      (a, b) => b.score - a.score || a.name.localeCompare(b.name)
+    );
+  }, [participants, autoSort]);
 
   const winners = useMemo(
-    () => rankedParticipants.filter((participant) => participant.score >= targetScore),
+    () =>
+      rankedParticipants.filter(
+        (participant) => participant.score >= targetScore
+      ),
     [rankedParticipants, targetScore]
-  )
+  );
 
   function addParticipant(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const candidate = nameInput.trim()
+    event.preventDefault();
+    const candidate = nameInput.trim();
 
     if (!candidate) {
-      setError("Enter a player or team name first.")
-      return
+      setError("Enter a player or team name first.");
+      return;
     }
 
     if (
       participants.some(
-        (participant) => participant.name.toLowerCase() === candidate.toLowerCase()
+        (participant) =>
+          participant.name.toLowerCase() === candidate.toLowerCase()
       )
     ) {
-      setError("That name is already on the board.")
-      return
+      setError("That name is already on the board.");
+      return;
     }
 
     setParticipants((current) => [
@@ -86,29 +88,31 @@ function ScorekeeperRoute() {
         name: candidate,
         score: startScore,
       },
-    ])
-    setNameInput("")
-    setError("")
+    ]);
+    setNameInput("");
+    setError("");
   }
 
   function changeScore(id: string, delta: number) {
     setParticipants((current) =>
       current.map((participant) => {
         if (participant.id !== id) {
-          return participant
+          return participant;
         }
 
-        const nextScore = participant.score + delta
+        const nextScore = participant.score + delta;
         return {
           ...participant,
           score: allowNegative ? nextScore : Math.max(0, nextScore),
-        }
+        };
       })
-    )
+    );
   }
 
   function removeParticipant(id: string) {
-    setParticipants((current) => current.filter((participant) => participant.id !== id))
+    setParticipants((current) =>
+      current.filter((participant) => participant.id !== id)
+    );
   }
 
   function resetScoresToStart() {
@@ -117,13 +121,13 @@ function ScorekeeperRoute() {
         ...participant,
         score: startScore,
       }))
-    )
+    );
   }
 
   function clearBoard() {
-    setParticipants([])
-    setNameInput("")
-    setError("")
+    setParticipants([]);
+    setNameInput("");
+    setError("");
   }
 
   return (
@@ -132,10 +136,14 @@ function ScorekeeperRoute() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Scorekeeper quick guide</DialogTitle>
-            <DialogDescription>This is only a quick UI guide.</DialogDescription>
+            <DialogDescription>
+              This is only a quick UI guide.
+            </DialogDescription>
           </DialogHeader>
           <ol className="list-decimal space-y-1 pl-5 text-sm">
-            <li>Set scoring rules for this game (start score, +/- values, target).</li>
+            <li>
+              Set scoring rules for this game (start score, +/- values, target).
+            </li>
             <li>Add players or teams to the board.</li>
             <li>Use + and - to track points each round.</li>
             <li>Use Reset Scores or Clear Board when starting a new match.</li>
@@ -146,7 +154,7 @@ function ScorekeeperRoute() {
         </DialogContent>
       </Dialog>
 
-      <main className="mx-auto grid max-w-[1300px] gap-4 p-4 lg:grid-cols-[minmax(300px,380px)_1fr]">
+      <main className="mx-auto grid max-w-325 gap-4 p-4 lg:grid-cols-[minmax(300px,380px)_1fr]">
         <aside className="bg-game-surface-1 border-border rounded-4xl border p-4 shadow-game-card">
           <header className="mb-4 grid gap-2">
             <div className="flex items-center justify-between gap-2">
@@ -164,7 +172,10 @@ function ScorekeeperRoute() {
               <Button variant="outline" onClick={clearBoard}>
                 Clear Board
               </Button>
-              <Button variant="outline" onClick={() => setInstructionsOpen(true)}>
+              <Button
+                variant="outline"
+                onClick={() => setInstructionsOpen(true)}
+              >
                 Show Instructions
               </Button>
             </div>
@@ -252,7 +263,9 @@ function ScorekeeperRoute() {
             />
             <Button type="submit">Add</Button>
           </form>
-          {error ? <p className="text-destructive mt-2 text-sm font-medium">{error}</p> : null}
+          {error ? (
+            <p className="text-destructive mt-2 text-sm font-medium">{error}</p>
+          ) : null}
         </aside>
 
         <section className="bg-game-surface-1 border-border rounded-4xl border p-4 shadow-game-card">
@@ -261,7 +274,9 @@ function ScorekeeperRoute() {
           </header>
 
           {rankedParticipants.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No participants yet.</p>
+            <p className="text-muted-foreground text-sm">
+              No participants yet.
+            </p>
           ) : (
             <ul className="grid gap-2">
               {rankedParticipants.map((participant) => (
@@ -271,7 +286,9 @@ function ScorekeeperRoute() {
                 >
                   <div className="min-w-0">
                     <p className="truncate font-medium">{participant.name}</p>
-                    <p className="text-muted-foreground text-xs">Target: {targetScore}</p>
+                    <p className="text-muted-foreground text-xs">
+                      Target: {targetScore}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <Button
@@ -283,7 +300,9 @@ function ScorekeeperRoute() {
                     >
                       -{subtractStep}
                     </Button>
-                    <strong className="min-w-10 text-center">{participant.score}</strong>
+                    <strong className="min-w-10 text-center">
+                      {participant.score}
+                    </strong>
                     <Button
                       type="button"
                       size="icon-sm"
@@ -310,9 +329,7 @@ function ScorekeeperRoute() {
           {winners.length > 0 ? (
             <div className="bg-game-success/15 border-game-success/40 mt-3 rounded-xl border px-3 py-2 text-sm">
               <p className="font-medium">Reached target</p>
-              <p>
-                {winners.map((winner) => winner.name).join(", ")}
-              </p>
+              <p>{winners.map((winner) => winner.name).join(", ")}</p>
             </div>
           ) : null}
 
@@ -329,9 +346,9 @@ function ScorekeeperRoute() {
         </section>
       </main>
     </>
-  )
+  );
 }
 
-export const Route = createFileRoute("/games/wavelength")({
+export const Route = createFileRoute("/games/scorekeeper")({
   component: ScorekeeperRoute,
-})
+});

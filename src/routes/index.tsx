@@ -30,7 +30,7 @@ const gameMenuItems: MenuSelectorItem[] = [
   {
     title: "Scorekeeper",
     description: "Flexible score tracker for games that only need bookkeeping.",
-    link: "/games/wavelength",
+    link: "/games/scorekeeper",
   },
 ];
 

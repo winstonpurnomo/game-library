@@ -383,4 +383,4 @@ export const CODENAMES_WORD_POOL = [
   "ZIRCON",
   "ZODIAC",
   "ZONE",
-] as const
+] as const;

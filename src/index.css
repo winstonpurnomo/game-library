@@ -110,8 +110,9 @@
   --game-card-back: oklch(0.38 0.14 302);
   --game-counter-bg: oklch(0.975 0.02 94);
   --game-counter-fg: oklch(0.22 0.03 22);
-  --game-shadow-card: 0 2px 0 0 oklch(0.28 0.01 20 / 0.22), 0 10px 28px -16px
-    oklch(0.28 0.02 22 / 0.34);
+  --game-shadow-card:
+    0 2px 0 0 oklch(0.28 0.01 20 / 0.22),
+    0 10px 28px -16px oklch(0.28 0.02 22 / 0.34);
   --game-shadow-floating: 0 12px 36px -16px oklch(0.18 0.03 20 / 0.42);
   --game-space-xs: 0.25rem;
   --game-space-sm: 0.5rem;
@@ -167,8 +168,8 @@
   --game-card-back: oklch(0.55 0.17 304);
   --game-counter-bg: oklch(0.278 0.02 298);
   --game-counter-fg: oklch(0.95 0.01 95);
-  --game-shadow-card: 0 1px 0 0 oklch(0.1 0.02 290 / 0.5), 0 16px 30px -18px
-    oklch(0 0 0 / 0.64);
+  --game-shadow-card:
+    0 1px 0 0 oklch(0.1 0.02 290 / 0.5), 0 16px 30px -18px oklch(0 0 0 / 0.64);
   --game-shadow-floating: 0 16px 45px -16px oklch(0 0 0 / 0.7);
 }
 

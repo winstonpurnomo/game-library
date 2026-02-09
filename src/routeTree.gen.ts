@@ -10,8 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as GamesWavelengthRouteImport } from './routes/games.wavelength'
 import { Route as GamesTabooRouteImport } from './routes/games.taboo'
+import { Route as GamesScorekeeperRouteImport } from './routes/games.scorekeeper'
 import { Route as GamesLetterBridgeRouteImport } from './routes/games.letter-bridge'
 import { Route as GamesCodenamesRouteImport } from './routes/games.codenames'
 
@@ -20,14 +20,14 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const GamesWavelengthRoute = GamesWavelengthRouteImport.update({
-  id: '/games/wavelength',
-  path: '/games/wavelength',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const GamesTabooRoute = GamesTabooRouteImport.update({
   id: '/games/taboo',
   path: '/games/taboo',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GamesScorekeeperRoute = GamesScorekeeperRouteImport.update({
+  id: '/games/scorekeeper',
+  path: '/games/scorekeeper',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GamesLetterBridgeRoute = GamesLetterBridgeRouteImport.update({
@@ -45,23 +45,23 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/letter-bridge': typeof GamesLetterBridgeRoute
+  '/games/scorekeeper': typeof GamesScorekeeperRoute
   '/games/taboo': typeof GamesTabooRoute
-  '/games/wavelength': typeof GamesWavelengthRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/letter-bridge': typeof GamesLetterBridgeRoute
+  '/games/scorekeeper': typeof GamesScorekeeperRoute
   '/games/taboo': typeof GamesTabooRoute
-  '/games/wavelength': typeof GamesWavelengthRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/letter-bridge': typeof GamesLetterBridgeRoute
+  '/games/scorekeeper': typeof GamesScorekeeperRoute
   '/games/taboo': typeof GamesTabooRoute
-  '/games/wavelength': typeof GamesWavelengthRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -69,30 +69,30 @@ export interface FileRouteTypes {
     | '/'
     | '/games/codenames'
     | '/games/letter-bridge'
+    | '/games/scorekeeper'
     | '/games/taboo'
-    | '/games/wavelength'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/games/codenames'
     | '/games/letter-bridge'
+    | '/games/scorekeeper'
     | '/games/taboo'
-    | '/games/wavelength'
   id:
     | '__root__'
     | '/'
     | '/games/codenames'
     | '/games/letter-bridge'
+    | '/games/scorekeeper'
     | '/games/taboo'
-    | '/games/wavelength'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   GamesCodenamesRoute: typeof GamesCodenamesRoute
   GamesLetterBridgeRoute: typeof GamesLetterBridgeRoute
+  GamesScorekeeperRoute: typeof GamesScorekeeperRoute
   GamesTabooRoute: typeof GamesTabooRoute
-  GamesWavelengthRoute: typeof GamesWavelengthRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -104,18 +104,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/games/wavelength': {
-      id: '/games/wavelength'
-      path: '/games/wavelength'
-      fullPath: '/games/wavelength'
-      preLoaderRoute: typeof GamesWavelengthRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/games/taboo': {
       id: '/games/taboo'
       path: '/games/taboo'
       fullPath: '/games/taboo'
       preLoaderRoute: typeof GamesTabooRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/games/scorekeeper': {
+      id: '/games/scorekeeper'
+      path: '/games/scorekeeper'
+      fullPath: '/games/scorekeeper'
+      preLoaderRoute: typeof GamesScorekeeperRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/games/letter-bridge': {
@@ -139,8 +139,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   GamesCodenamesRoute: GamesCodenamesRoute,
   GamesLetterBridgeRoute: GamesLetterBridgeRoute,
+  GamesScorekeeperRoute: GamesScorekeeperRoute,
   GamesTabooRoute: GamesTabooRoute,
-  GamesWavelengthRoute: GamesWavelengthRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -1,9 +1,9 @@
-import * as React from "react"
-import { cva, type VariantProps } from "class-variance-authority"
-import { MinusIcon, PlusIcon } from "lucide-react"
+import { cva, type VariantProps } from "class-variance-authority";
+import { MinusIcon, PlusIcon } from "lucide-react";
+import * as React from "react";
 
-import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 const counterVariants = cva(
   "bg-game-counter-bg text-game-counter-fg border-border inline-flex items-center gap-2 border p-1.5 shadow-game-card transition-[border-color,box-shadow] duration-[var(--game-motion-fast)]",
@@ -31,58 +31,58 @@ const counterVariants = cva(
       disabled: false,
     },
   }
-)
+);
 
 type CounterContextValue = {
-  value: number
-  min: number
-  max: number
-  disabled: boolean
-  readOnly: boolean
-  size: NonNullable<CounterProps["size"]>
-  canDecrement: boolean
-  canIncrement: boolean
-  decrement: () => void
-  increment: () => void
-  setToMin: () => void
-  setToMax: () => void
-  decrementLabel: string
-  incrementLabel: string
-  decrementContent?: React.ReactNode
-  incrementContent?: React.ReactNode
-  formatValue?: (value: number) => React.ReactNode
-}
+  value: number;
+  min: number;
+  max: number;
+  disabled: boolean;
+  readOnly: boolean;
+  size: NonNullable<CounterProps["size"]>;
+  canDecrement: boolean;
+  canIncrement: boolean;
+  decrement: () => void;
+  increment: () => void;
+  setToMin: () => void;
+  setToMax: () => void;
+  decrementLabel: string;
+  incrementLabel: string;
+  decrementContent?: React.ReactNode;
+  incrementContent?: React.ReactNode;
+  formatValue?: (value: number) => React.ReactNode;
+};
 
-const CounterContext = React.createContext<CounterContextValue | null>(null)
+const CounterContext = React.createContext<CounterContextValue | null>(null);
 
 function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value))
+  return Math.min(max, Math.max(min, value));
 }
 
 function useCounterContext() {
-  const context = React.useContext(CounterContext)
+  const context = React.useContext(CounterContext);
   if (!context) {
-    throw new Error("Counter compound components must be used within Counter")
+    throw new Error("Counter compound components must be used within Counter");
   }
-  return context
+  return context;
 }
 
 type CounterProps = React.ComponentProps<"div"> &
   Omit<VariantProps<typeof counterVariants>, "disabled"> & {
-    value?: number
-    defaultValue?: number
-    onValueChange?: (value: number) => void
-    min?: number
-    max?: number
-    step?: number
-    disabled?: boolean
-    readOnly?: boolean
-    formatValue?: (value: number) => React.ReactNode
-    decrementLabel?: string
-    incrementLabel?: string
-    decrementContent?: React.ReactNode
-    incrementContent?: React.ReactNode
-  }
+    value?: number;
+    defaultValue?: number;
+    onValueChange?: (value: number) => void;
+    min?: number;
+    max?: number;
+    step?: number;
+    disabled?: boolean;
+    readOnly?: boolean;
+    formatValue?: (value: number) => React.ReactNode;
+    decrementLabel?: string;
+    incrementLabel?: string;
+    decrementContent?: React.ReactNode;
+    incrementContent?: React.ReactNode;
+  };
 
 function Counter({
   className,
@@ -105,67 +105,67 @@ function Counter({
   onKeyDown,
   ...props
 }: CounterProps) {
-  const isControlled = value !== undefined
+  const isControlled = value !== undefined;
   const [internalValue, setInternalValue] = React.useState(() =>
     clamp(defaultValue, min, max)
-  )
+  );
 
   const currentValue = clamp(
     isControlled ? (value ?? defaultValue) : internalValue,
     min,
     max
-  )
+  );
 
   const updateValue = React.useCallback(
     (nextValue: number) => {
-      const clamped = clamp(nextValue, min, max)
+      const clamped = clamp(nextValue, min, max);
       if (!isControlled) {
-        setInternalValue(clamped)
+        setInternalValue(clamped);
       }
       if (clamped !== currentValue) {
-        onValueChange?.(clamped)
+        onValueChange?.(clamped);
       }
     },
     [currentValue, isControlled, max, min, onValueChange]
-  )
+  );
 
-  const canDecrement = !disabled && !readOnly && currentValue > min
-  const canIncrement = !disabled && !readOnly && currentValue < max
+  const canDecrement = !disabled && !readOnly && currentValue > min;
+  const canIncrement = !disabled && !readOnly && currentValue < max;
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    onKeyDown?.(event)
+    onKeyDown?.(event);
     if (event.defaultPrevented || disabled || readOnly) {
-      return
+      return;
     }
 
     switch (event.key) {
       case "ArrowDown":
       case "ArrowLeft": {
-        event.preventDefault()
-        updateValue(currentValue - step)
-        break
+        event.preventDefault();
+        updateValue(currentValue - step);
+        break;
       }
       case "ArrowUp":
       case "ArrowRight": {
-        event.preventDefault()
-        updateValue(currentValue + step)
-        break
+        event.preventDefault();
+        updateValue(currentValue + step);
+        break;
       }
       case "Home": {
-        event.preventDefault()
-        updateValue(min)
-        break
+        event.preventDefault();
+        updateValue(min);
+        break;
       }
       case "End": {
-        event.preventDefault()
-        updateValue(max)
-        break
+        event.preventDefault();
+        updateValue(max);
+        break;
       }
       default: {
-        break
+        break;
       }
     }
-  }
+  };
 
   const contextValue = React.useMemo<CounterContextValue>(
     () => ({
@@ -204,7 +204,7 @@ function Counter({
       step,
       updateValue,
     ]
-  )
+  );
 
   return (
     <CounterContext.Provider value={contextValue}>
@@ -228,7 +228,7 @@ function Counter({
         )}
       </div>
     </CounterContext.Provider>
-  )
+  );
 }
 
 function CounterDecrement({
@@ -237,19 +237,25 @@ function CounterDecrement({
   onClick,
   ...props
 }: React.ComponentProps<typeof Button>) {
-  const counter = useCounterContext()
+  const counter = useCounterContext();
   return (
     <Button
       data-slot="counter-decrement"
       type="button"
       variant="outline"
-      size={counter.size === "sm" ? "icon-xs" : (counter.size === "lg" ? "icon-lg" : "icon")}
+      size={
+        counter.size === "sm"
+          ? "icon-xs"
+          : counter.size === "lg"
+            ? "icon-lg"
+            : "icon"
+      }
       disabled={!counter.canDecrement}
       aria-label={counter.decrementLabel}
       onClick={(event) => {
-        onClick?.(event)
+        onClick?.(event);
         if (!event.defaultPrevented) {
-          counter.decrement()
+          counter.decrement();
         }
       }}
       className={cn("rounded-full", className)}
@@ -257,7 +263,7 @@ function CounterDecrement({
     >
       {children ?? counter.decrementContent ?? <MinusIcon />}
     </Button>
-  )
+  );
 }
 
 function CounterIncrement({
@@ -266,19 +272,25 @@ function CounterIncrement({
   onClick,
   ...props
 }: React.ComponentProps<typeof Button>) {
-  const counter = useCounterContext()
+  const counter = useCounterContext();
   return (
     <Button
       data-slot="counter-increment"
       type="button"
       variant="outline"
-      size={counter.size === "sm" ? "icon-xs" : (counter.size === "lg" ? "icon-lg" : "icon")}
+      size={
+        counter.size === "sm"
+          ? "icon-xs"
+          : counter.size === "lg"
+            ? "icon-lg"
+            : "icon"
+      }
       disabled={!counter.canIncrement}
       aria-label={counter.incrementLabel}
       onClick={(event) => {
-        onClick?.(event)
+        onClick?.(event);
         if (!event.defaultPrevented) {
-          counter.increment()
+          counter.increment();
         }
       }}
       className={cn("rounded-full", className)}
@@ -286,11 +298,11 @@ function CounterIncrement({
     >
       {children ?? counter.incrementContent ?? <PlusIcon />}
     </Button>
-  )
+  );
 }
 
 function CounterValue({ className, ...props }: React.ComponentProps<"output">) {
-  const counter = useCounterContext()
+  const counter = useCounterContext();
   return (
     <output
       data-slot="counter-value"
@@ -304,7 +316,7 @@ function CounterValue({ className, ...props }: React.ComponentProps<"output">) {
     >
       {counter.formatValue ? counter.formatValue(counter.value) : counter.value}
     </output>
-  )
+  );
 }
 
-export { Counter, CounterDecrement, CounterIncrement, CounterValue }
+export { Counter, CounterDecrement, CounterIncrement, CounterValue };

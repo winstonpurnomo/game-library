@@ -1,7 +1,7 @@
-import { Link, createFileRoute } from "@tanstack/react-router"
-import { useEffect, useMemo, useState } from "react"
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogClose,
@@ -10,183 +10,196 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { TABOO_CARDS } from "@/lib/taboo-cards"
-import { cn } from "@/lib/utils"
+} from "@/components/ui/dialog";
+import { TABOO_CARDS } from "@/lib/taboo-cards";
+import { cn } from "@/lib/utils";
 
-type Team = "red" | "blue"
+type Team = "red" | "blue";
 
 const TEAM_LABEL: Record<Team, string> = {
   red: "Red",
   blue: "Blue",
-}
+};
 
-const DEFAULT_TURN_SECONDS = 60
-const DEFAULT_PASS_LIMIT = 2
+const DEFAULT_TURN_SECONDS = 60;
+const DEFAULT_PASS_LIMIT = 2;
 
 function shuffle<T>(items: readonly T[]) {
-  const next = [...items]
+  const next = [...items];
   for (let i = next.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[next[i], next[j]] = [next[j], next[i]]
+    const j = Math.floor(Math.random() * (i + 1));
+    [next[i], next[j]] = [next[j], next[i]];
   }
-  return next
+  return next;
 }
 
 function otherTeam(team: Team): Team {
-  return team === "red" ? "blue" : "red"
+  return team === "red" ? "blue" : "red";
 }
 
 function formatTime(seconds: number) {
-  const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 function TabooRoute() {
-  const [teamTurn, setTeamTurn] = useState<Team>("red")
-  const [scores, setScores] = useState<Record<Team, number>>({ red: 0, blue: 0 })
-  const [roundActive, setRoundActive] = useState(false)
-  const [turnSecondsInput, setTurnSecondsInput] = useState(String(DEFAULT_TURN_SECONDS))
-  const [timeLeft, setTimeLeft] = useState(DEFAULT_TURN_SECONDS)
-  const [passesLeft, setPassesLeft] = useState(DEFAULT_PASS_LIMIT)
+  const [teamTurn, setTeamTurn] = useState<Team>("red");
+  const [scores, setScores] = useState<Record<Team, number>>({
+    red: 0,
+    blue: 0,
+  });
+  const [roundActive, setRoundActive] = useState(false);
+  const [turnSecondsInput, setTurnSecondsInput] = useState(
+    String(DEFAULT_TURN_SECONDS)
+  );
+  const [timeLeft, setTimeLeft] = useState(DEFAULT_TURN_SECONDS);
+  const [passesLeft, setPassesLeft] = useState(DEFAULT_PASS_LIMIT);
   const [statusMessage, setStatusMessage] = useState(
     "Set turn length and start the round."
-  )
-  const [instructionsOpen, setInstructionsOpen] = useState(true)
+  );
+  const [instructionsOpen, setInstructionsOpen] = useState(true);
 
   const [drawState, setDrawState] = useState(() => ({
     deck: shuffle(Array.from({ length: TABOO_CARDS.length }, (_, idx) => idx)),
     pointer: 0,
     currentCardIndex: null as number | null,
-  }))
+  }));
 
   const leadingTeam = useMemo(() => {
     if (scores.red === scores.blue) {
-      return "Tie game"
+      return "Tie game";
     }
-    return scores.red > scores.blue ? "Red leads" : "Blue leads"
-  }, [scores.blue, scores.red])
+    return scores.red > scores.blue ? "Red leads" : "Blue leads";
+  }, [scores.blue, scores.red]);
 
   const currentCard =
     drawState.currentCardIndex === null
       ? null
-      : TABOO_CARDS[drawState.currentCardIndex]
+      : TABOO_CARDS[drawState.currentCardIndex];
 
   useEffect(() => {
     if (!roundActive || timeLeft <= 0) {
-      return
+      return;
     }
 
     const timer = window.setInterval(() => {
-      setTimeLeft((prev) => prev - 1)
-    }, 1000)
+      setTimeLeft((prev) => prev - 1);
+    }, 1000);
 
-    return () => window.clearInterval(timer)
-  }, [roundActive, timeLeft])
+    return () => window.clearInterval(timer);
+  }, [roundActive, timeLeft]);
 
   useEffect(() => {
     if (!roundActive || timeLeft > 0) {
-      return
+      return;
     }
-    endTurn("Time is up. Turn passes.")
-  }, [roundActive, timeLeft])
+    endTurn("Time is up. Turn passes.");
+  }, [roundActive, timeLeft]);
 
   function drawNextCard() {
     setDrawState((current) => {
-      let activeDeck = current.deck
-      let {pointer} = current
+      let activeDeck = current.deck;
+      let { pointer } = current;
 
       if (pointer >= activeDeck.length) {
-        activeDeck = shuffle(Array.from({ length: TABOO_CARDS.length }, (_, idx) => idx))
-        pointer = 0
+        activeDeck = shuffle(
+          Array.from({ length: TABOO_CARDS.length }, (_, idx) => idx)
+        );
+        pointer = 0;
       }
 
-      const nextCard = activeDeck[pointer] ?? null
+      const nextCard = activeDeck[pointer] ?? null;
       return {
         deck: activeDeck,
         pointer: pointer + 1,
         currentCardIndex: nextCard,
-      }
-    })
+      };
+    });
   }
 
   function startTurn() {
     if (roundActive) {
-      return
+      return;
     }
 
-    const parsedSeconds = Number(turnSecondsInput)
-    if (Number.isNaN(parsedSeconds) || parsedSeconds < 15 || parsedSeconds > 180) {
-      setStatusMessage("Turn length must be between 15 and 180 seconds.")
-      return
+    const parsedSeconds = Number(turnSecondsInput);
+    if (
+      Number.isNaN(parsedSeconds) ||
+      parsedSeconds < 15 ||
+      parsedSeconds > 180
+    ) {
+      setStatusMessage("Turn length must be between 15 and 180 seconds.");
+      return;
     }
 
-    setTimeLeft(parsedSeconds)
-    setPassesLeft(DEFAULT_PASS_LIMIT)
-    setRoundActive(true)
-    setStatusMessage(`${TEAM_LABEL[teamTurn]} team turn started.`)
-    drawNextCard()
+    setTimeLeft(parsedSeconds);
+    setPassesLeft(DEFAULT_PASS_LIMIT);
+    setRoundActive(true);
+    setStatusMessage(`${TEAM_LABEL[teamTurn]} team turn started.`);
+    drawNextCard();
   }
 
   function endTurn(message: string) {
-    setRoundActive(false)
-    setTeamTurn((current) => otherTeam(current))
-    setPassesLeft(DEFAULT_PASS_LIMIT)
-    setStatusMessage(message)
+    setRoundActive(false);
+    setTeamTurn((current) => otherTeam(current));
+    setPassesLeft(DEFAULT_PASS_LIMIT);
+    setStatusMessage(message);
   }
 
   function awardPoint() {
     if (!roundActive) {
-      return
+      return;
     }
     setScores((current) => ({
       ...current,
       [teamTurn]: current[teamTurn] + 1,
-    }))
-    setStatusMessage(`${TEAM_LABEL[teamTurn]} team guessed correctly.`)
-    drawNextCard()
+    }));
+    setStatusMessage(`${TEAM_LABEL[teamTurn]} team guessed correctly.`);
+    drawNextCard();
   }
 
   function penaltyPoint() {
     if (!roundActive) {
-      return
+      return;
     }
     setScores((current) => ({
       ...current,
       [teamTurn]: current[teamTurn] - 1,
-    }))
-    setStatusMessage(`${TEAM_LABEL[teamTurn]} team got a taboo buzz.`)
-    drawNextCard()
+    }));
+    setStatusMessage(`${TEAM_LABEL[teamTurn]} team got a taboo buzz.`);
+    drawNextCard();
   }
 
   function passCard() {
     if (!roundActive) {
-      return
+      return;
     }
     if (passesLeft <= 0) {
-      setStatusMessage("No passes left this turn.")
-      return
+      setStatusMessage("No passes left this turn.");
+      return;
     }
 
-    setPassesLeft((current) => current - 1)
-    setStatusMessage(`${TEAM_LABEL[teamTurn]} team used a pass.`)
-    drawNextCard()
+    setPassesLeft((current) => current - 1);
+    setStatusMessage(`${TEAM_LABEL[teamTurn]} team used a pass.`);
+    drawNextCard();
   }
 
   function resetGame() {
-    setTeamTurn("red")
-    setScores({ red: 0, blue: 0 })
-    setRoundActive(false)
-    setTurnSecondsInput(String(DEFAULT_TURN_SECONDS))
-    setTimeLeft(DEFAULT_TURN_SECONDS)
-    setPassesLeft(DEFAULT_PASS_LIMIT)
-    setStatusMessage("Set turn length and start the round.")
+    setTeamTurn("red");
+    setScores({ red: 0, blue: 0 });
+    setRoundActive(false);
+    setTurnSecondsInput(String(DEFAULT_TURN_SECONDS));
+    setTimeLeft(DEFAULT_TURN_SECONDS);
+    setPassesLeft(DEFAULT_PASS_LIMIT);
+    setStatusMessage("Set turn length and start the round.");
     setDrawState({
-      deck: shuffle(Array.from({ length: TABOO_CARDS.length }, (_, idx) => idx)),
+      deck: shuffle(
+        Array.from({ length: TABOO_CARDS.length }, (_, idx) => idx)
+      ),
       pointer: 0,
       currentCardIndex: null,
-    })
+    });
   }
 
   return (
@@ -195,7 +208,9 @@ function TabooRoute() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Taboo UI quick guide</DialogTitle>
-            <DialogDescription>This is only a quick UI guide.</DialogDescription>
+            <DialogDescription>
+              This is only a quick UI guide.
+            </DialogDescription>
           </DialogHeader>
           <ol className="list-decimal space-y-1 pl-5 text-sm">
             <li>Set turn length, then click Start Turn.</li>
@@ -209,7 +224,7 @@ function TabooRoute() {
         </DialogContent>
       </Dialog>
 
-      <main className="mx-auto grid max-w-[1300px] gap-4 p-4 lg:grid-cols-[minmax(300px,380px)_1fr]">
+      <main className="mx-auto grid max-w-325 gap-4 p-4 lg:grid-cols-[minmax(300px,380px)_1fr]">
         <aside className="bg-game-surface-1 border-border rounded-4xl border p-4 shadow-game-card">
           <header className="mb-4 grid gap-2">
             <div className="flex items-center justify-between gap-2">
@@ -224,7 +239,10 @@ function TabooRoute() {
               <Button variant="secondary" onClick={resetGame}>
                 New Game
               </Button>
-              <Button variant="outline" onClick={() => setInstructionsOpen(true)}>
+              <Button
+                variant="outline"
+                onClick={() => setInstructionsOpen(true)}
+              >
                 Show Instructions
               </Button>
             </div>
@@ -283,39 +301,53 @@ function TabooRoute() {
             <Button onClick={startTurn} disabled={roundActive}>
               Start Turn
             </Button>
-            <Button variant="outline" onClick={() => endTurn("Turn ended manually.")}>
+            <Button
+              variant="outline"
+              onClick={() => endTurn("Turn ended manually.")}
+            >
               End Turn
             </Button>
           </section>
 
           <section className="grid gap-2">
-            <Button onClick={awardPoint} disabled={!roundActive || !currentCard}>
+            <Button
+              onClick={awardPoint}
+              disabled={!roundActive || !currentCard}
+            >
               Correct (+1)
             </Button>
-            <Button onClick={penaltyPoint} disabled={!roundActive || !currentCard} variant="destructive">
+            <Button
+              onClick={penaltyPoint}
+              disabled={!roundActive || !currentCard}
+              variant="destructive"
+            >
               Taboo Buzz (-1)
             </Button>
-            <Button onClick={passCard} disabled={!roundActive || !currentCard} variant="outline">
+            <Button
+              onClick={passCard}
+              disabled={!roundActive || !currentCard}
+              variant="outline"
+            >
               Pass
             </Button>
           </section>
         </aside>
 
         <section className="bg-game-surface-1 border-border rounded-4xl border p-4 shadow-game-card">
-          {!currentCard ? (
-            <div className="text-muted-foreground grid h-full min-h-[420px] place-items-center text-center">
-              <p>Start a turn to reveal the first card.</p>
-            </div>
-          ) : (
-            <div className="grid h-full min-h-[420px] content-start gap-5">
+          {currentCard ? (
+            <div className="grid h-full min-h-105 content-start gap-5">
               <div>
-                <p className="text-muted-foreground mb-1 text-sm uppercase">Guess Word</p>
+                <p className="text-muted-foreground mb-1 text-sm uppercase">
+                  Guess Word
+                </p>
                 <h2 className="text-4xl leading-tight font-extrabold tracking-wide uppercase">
                   {currentCard.word}
                 </h2>
               </div>
               <div>
-                <p className="text-muted-foreground mb-2 text-sm uppercase">Do Not Say</p>
+                <p className="text-muted-foreground mb-2 text-sm uppercase">
+                  Do Not Say
+                </p>
                 <ul className="grid gap-2 sm:grid-cols-2">
                   {currentCard.taboo.map((tabooWord) => (
                     <li
@@ -328,13 +360,17 @@ function TabooRoute() {
                 </ul>
               </div>
             </div>
+          ) : (
+            <div className="text-muted-foreground grid h-full min-h-105 place-items-center text-center">
+              <p>Start a turn to reveal the first card.</p>
+            </div>
           )}
         </section>
       </main>
     </>
-  )
+  );
 }
 
 export const Route = createFileRoute("/games/taboo")({
   component: TabooRoute,
-})
+});

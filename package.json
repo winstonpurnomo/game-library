@@ -1,12 +1,11 @@
 {
-  "name": "2026-02-09-game-library",
+  "name": "game-library",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
     "preview": "vite preview",
     "check": "ultracite check",
     "fix": "ultracite fix",
@@ -27,7 +26,6 @@
     "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/router-plugin": "^1.159.4",
     "@types/node": "^25.2.2",
@@ -35,8 +33,6 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.3",
     "babel-plugin-react-compiler": "^1.0.0",
-    "eslint": "^10.0.0",
-    "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.0",
     "globals": "^17.3.0",
     "husky": "^9.1.7",
@@ -46,7 +42,6 @@
     "shadcn": "^3.8.4",
     "tw-animate-css": "^1.4.0",
     "typescript": "~5.9.3",
-    "typescript-eslint": "^8.54.0",
     "ultracite": "7.1.5",
     "vite": "^8.0.0-beta.13",
     "vite-tsconfig-paths": "^6.1.0"

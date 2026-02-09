@@ -1,7 +1,7 @@
-import * as React from "react"
-import { cva, type VariantProps } from "class-variance-authority"
+import { cva, type VariantProps } from "class-variance-authority";
+import * as React from "react";
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/utils";
 
 const gameCardVariants = cva(
   "group/game-card border-border bg-game-surface-1 text-foreground shadow-game-card relative grid gap-3 border p-4 transition-[background-color,box-shadow,transform,border-color] duration-[var(--game-motion-base)]",
@@ -9,7 +9,8 @@ const gameCardVariants = cva(
     variants: {
       orientation: {
         vertical: "grid-rows-[auto_1fr_auto] w-[min(100%,20rem)]",
-        horizontal: "grid-cols-[auto_1fr] grid-rows-[1fr_auto] w-[min(100%,30rem)]",
+        horizontal:
+          "grid-cols-[auto_1fr] grid-rows-[1fr_auto] w-[min(100%,30rem)]",
       },
       size: {
         sm: "p-3 text-sm",
@@ -39,7 +40,7 @@ const gameCardVariants = cva(
       interactive: false,
     },
   }
-)
+);
 
 function GameCard({
   className,
@@ -50,7 +51,7 @@ function GameCard({
   ...props
 }: React.ComponentProps<"article"> &
   VariantProps<typeof gameCardVariants> & {
-    interactive?: boolean
+    interactive?: boolean;
   }) {
   return (
     <article
@@ -59,12 +60,18 @@ function GameCard({
       data-size={size}
       data-variant={variant}
       className={cn(
-        gameCardVariants({ orientation, size, variant, interactive, className }),
+        gameCardVariants({
+          orientation,
+          size,
+          variant,
+          interactive,
+          className,
+        }),
         "rounded-[var(--radius-game-card)]"
       )}
       {...props}
     />
-  )
+  );
 }
 
 function GameCardMedia({ className, ...props }: React.ComponentProps<"div">) {
@@ -78,10 +85,13 @@ function GameCardMedia({ className, ...props }: React.ComponentProps<"div">) {
       )}
       {...props}
     />
-  )
+  );
 }
 
-function GameCardHeader({ className, ...props }: React.ComponentProps<"header">) {
+function GameCardHeader({
+  className,
+  ...props
+}: React.ComponentProps<"header">) {
   return (
     <header
       data-slot="game-card-header"
@@ -92,7 +102,7 @@ function GameCardHeader({ className, ...props }: React.ComponentProps<"header">)
       )}
       {...props}
     />
-  )
+  );
 }
 
 function GameCardTitle({ className, ...props }: React.ComponentProps<"h3">) {
@@ -102,7 +112,7 @@ function GameCardTitle({ className, ...props }: React.ComponentProps<"h3">) {
       className={cn("text-base leading-tight font-semibold", className)}
       {...props}
     />
-  )
+  );
 }
 
 function GameCardDescription({
@@ -115,7 +125,7 @@ function GameCardDescription({
       className={cn("text-muted-foreground text-sm", className)}
       {...props}
     />
-  )
+  );
 }
 
 function GameCardBadge({ className, ...props }: React.ComponentProps<"span">) {
@@ -128,10 +138,13 @@ function GameCardBadge({ className, ...props }: React.ComponentProps<"span">) {
       )}
       {...props}
     />
-  )
+  );
 }
 
-function GameCardFooter({ className, ...props }: React.ComponentProps<"footer">) {
+function GameCardFooter({
+  className,
+  ...props
+}: React.ComponentProps<"footer">) {
   return (
     <footer
       data-slot="game-card-footer"
@@ -142,7 +155,7 @@ function GameCardFooter({ className, ...props }: React.ComponentProps<"footer">)
       )}
       {...props}
     />
-  )
+  );
 }
 
 export {
@@ -153,4 +166,4 @@ export {
   GameCardHeader,
   GameCardMedia,
   GameCardTitle,
-}
+};

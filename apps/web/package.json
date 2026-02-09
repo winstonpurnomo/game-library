@@ -6,6 +6,9 @@
     "dev": "vite --port 3000",
     "build": "vite build",
     "preview": "vite preview",
+    "preview:worker": "bun run build && wrangler dev --config dist/server/wrangler.json",
+    "deploy": "bun run build && wrangler deploy --config dist/server/wrangler.json",
+    "cf-typegen": "wrangler types",
     "test": "vitest run"
   },
   "dependencies": {
@@ -13,9 +16,6 @@
     "@tanstack/react-devtools": "^0.9.5",
     "@tanstack/react-router": "^1.159.5",
     "@tanstack/react-router-devtools": "^1.159.5",
-    "@tanstack/react-router-ssr-query": "^1.159.5",
-    "@tanstack/react-start": "^1.159.5",
-    "@tanstack/router-plugin": "^1.132.0",
     "bun": "^1.3.9",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

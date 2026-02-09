@@ -285,3 +285,12 @@ Files prefixed with `demo` can be safely deleted. They are there to provide a st
 # Learn More
 
 You can learn more about all of the offerings from TanStack in the [TanStack documentation](https://tanstack.com).
+
+## Cloudflare Worker Deploy
+
+For production deploys, use the generated Wrangler config from the Vite/TanStack build output:
+
+- `bun run deploy` runs `vite build` and then deploys with `--config dist/server/wrangler.json`
+- `bun run preview:worker` does the same for local Wrangler preview
+
+That generated config includes the Worker entry and the client assets binding required for hydration.

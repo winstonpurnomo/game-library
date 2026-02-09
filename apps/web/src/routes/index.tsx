@@ -11,6 +11,12 @@ export const Route = createFileRoute("/")({
 
 const gameMenuItems: MenuSelectorItem[] = [
   {
+    title: "Multiplayer Euchre",
+    description:
+      "4-player trick-taking with room creation, optional passwords, and live turns.",
+    link: "/games/euchre",
+  },
+  {
     title: "Codenames",
     description:
       "Team-based word association with hidden roles and one-word clues.",

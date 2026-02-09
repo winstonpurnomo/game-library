@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": [
+    "./node_modules/ultracite/config/oxlint/core/.oxlintrc.json",
+    "./node_modules/ultracite/config/oxlint/react/.oxlintrc.json",
+    "./node_modules/ultracite/config/oxlint/remix/.oxlintrc.json"
+  ],
+  "rules": {
+    "eslint/func-style": "off",
+    "eslint/max-statements": "off",
+    "eslint/sort-keys": "off",
+    "import/consistent-type-specifier-style": "off",
+    "import/no-named-as-default": "off",
+    "jest/require-hook": "off",
+    "jsx_a11y/img-redundant-alt": "warn",
+    "promise/avoid-new": "off",
+    "react_perf/jsx-no-new-function-as-prop": "off",
+    "typescript/consistent-type-definitions": "off"
+  }
+}

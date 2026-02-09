@@ -56,5 +56,6 @@
       "oxlint"
     ],
     "*.{json,jsonc,css,scss,md,mdx,yml,yaml,html}": "oxfmt --write"
-  }
+  },
+  "packageManager": "bun@1.3.9"
 }

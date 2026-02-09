@@ -9,6 +9,8 @@ Client-side board/party game library built with:
 - `Tailwind CSS v4`
 - `shadcn` + `@base-ui/react` primitives
 
+Our default package manager is bun. Please refer to the `package.json` file for the exact version used.
+
 ## Getting Started
 
 Install dependencies:

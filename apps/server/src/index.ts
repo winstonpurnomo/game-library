@@ -110,6 +110,7 @@ const RANKS: Rank[] = ["9", "10", "J", "Q", "K", "A"];
 const SUITS: Suit[] = ["clubs", "diamonds", "hearts", "spades"];
 const ROOM_SIZE = 4;
 const TARGET_SCORE = 10;
+const ROOM_TTL_MS = 60 * 60 * 1000;
 
 function buildCorsHeaders(origin: string | null) {
   return {
@@ -301,6 +302,32 @@ export class WebSocketHibernationServer extends DurableObject {
   async persistRooms() {
     const entries = Object.fromEntries(this.rooms.entries());
     await this.ctx.storage.put(STORAGE_KEY, entries);
+  }
+
+  async pruneExpiredRooms() {
+    const now = Date.now();
+    const expiredRoomNames: string[] = [];
+
+    this.rooms.forEach((room, roomName) => {
+      if (now - room.createdAt >= ROOM_TTL_MS) {
+        expiredRoomNames.push(roomName);
+      }
+    });
+
+    if (expiredRoomNames.length === 0) {
+      return;
+    }
+
+    expiredRoomNames.forEach((roomName) => {
+      this.rooms.delete(roomName);
+      this.sessions.forEach((session, ws) => {
+        if (session.roomName === roomName) {
+          ws.close(1001, "Room expired");
+        }
+      });
+    });
+
+    await this.persistRooms();
   }
 
   listRooms() {
@@ -1071,6 +1098,7 @@ export class WebSocketHibernationServer extends DurableObject {
 
   async fetch(request: Request): Promise<Response> {
     await this.ready;
+    await this.pruneExpiredRooms();
 
     const url = new URL(request.url);
     const origin = request.headers.get("Origin");
@@ -1129,6 +1157,8 @@ export class WebSocketHibernationServer extends DurableObject {
   }
 
   async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
+    await this.pruneExpiredRooms();
+
     const session = this.sessions.get(ws);
     if (!session) {
       ws.close(1008, "Missing session");
@@ -1197,7 +1227,6 @@ export class WebSocketHibernationServer extends DurableObject {
     this.autoAdvanceDisconnectedTurn(room);
 
     await this.persistRooms();
-    this.sendInfo(room.name, "A player disconnected. Their seat is reserved.");
     this.broadcastRoom(room.name);
   }
 }

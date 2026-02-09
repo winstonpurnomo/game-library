@@ -9,13 +9,7 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const gameMenuItems: MenuSelectorItem[] = [
-  {
-    title: "Multiplayer Euchre",
-    description:
-      "4-player trick-taking with room creation, optional passwords, and live turns.",
-    link: "/games/euchre",
-  },
+const localGameMenuItems: MenuSelectorItem[] = [
   {
     title: "Codenames",
     description:
@@ -40,10 +34,18 @@ const gameMenuItems: MenuSelectorItem[] = [
   },
 ];
 
+const multiplayerMenuItems: MenuSelectorItem[] = [
+  {
+    title: "Euchre",
+    description: "4-player trick-taking played in pairs.",
+    link: "/games/euchre",
+  },
+];
+
 function Index() {
   return (
     <div className="p-6 md:p-8">
-      <div className="mx-auto grid w-full max-w-2xl gap-5">
+      <div className="mx-auto grid w-full max-w-2xl gap-6">
         <header className="grid gap-1 text-center">
           <h1 className="text-balance text-2xl font-semibold md:text-3xl">
             Select a game to continue
@@ -52,7 +54,20 @@ function Index() {
             Pick a mode and jump in.
           </p>
         </header>
-        <MenuSelector items={gameMenuItems} />
+
+        <section className="grid gap-2">
+          <h2 className="text-sm font-semibold tracking-wide uppercase">
+            Local
+          </h2>
+          <MenuSelector items={localGameMenuItems} />
+        </section>
+
+        <section className="grid gap-2">
+          <h2 className="text-sm font-semibold tracking-wide uppercase">
+            Multi Device
+          </h2>
+          <MenuSelector items={multiplayerMenuItems} />
+        </section>
       </div>
     </div>
   );

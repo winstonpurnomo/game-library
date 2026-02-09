@@ -770,29 +770,31 @@ function EuchreRouteComponent() {
                       className="border-border bg-background rounded-xl border p-2"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{room.name}</p>
+                          <p className="text-muted-foreground text-xs">
+                            {room.status === "playing" ? "In game" : "Lobby"} •{" "}
+                            {room.players}/{room.maxPlayers} players
+                            {room.hasPassword ? " • Password" : ""}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
                           onClick={() =>
                             navigate({
                               search: (previous: EuchreSearch) => ({
                                 ...previous,
+                                mode: "join",
                                 room: room.name,
                               }),
                               replace: true,
                             })
                           }
-                          className="text-left text-sm font-medium underline-offset-2 hover:underline"
                         >
-                          {room.name}
-                        </button>
-                        <span className="text-muted-foreground text-xs">
-                          {room.players}/{room.maxPlayers}
-                        </span>
+                          Join
+                        </Button>
                       </div>
-                      <p className="text-muted-foreground text-xs">
-                        {room.status === "playing" ? "In game" : "Lobby"}
-                        {room.hasPassword ? " | Password" : ""}
-                      </p>
                     </li>
                   ))}
                 </ul>
@@ -917,7 +919,11 @@ function EuchreRouteComponent() {
                           >
                             {player ? (
                               <>
-                                <p className="truncate font-semibold">
+                                <p className="inline-flex items-center justify-center gap-1 truncate font-semibold">
+                                  <span
+                                    className={`inline-block size-2 rounded-full ${player.connected ? "bg-emerald-400" : "bg-rose-400"}`}
+                                    aria-hidden
+                                  />
                                   {player.name}
                                 </p>
                                 <p className="text-white/80">
@@ -926,7 +932,9 @@ function EuchreRouteComponent() {
                                 <p className="text-white/80">
                                   Team {player.seatIndex % 2 === 0 ? "A" : "B"} •
                                   {" "}
-                                  {player.handCount} cards
+                                  {player.handCount} cards •
+                                  {" "}
+                                  {player.connected ? "Online" : "Offline"}
                                 </p>
                               </>
                             ) : (
@@ -999,7 +1007,7 @@ function EuchreRouteComponent() {
                         game.phase === "dealer-discard" ||
                         game.phase === "hand-over" ||
                         game.phase === "game-over") && (
-                        <section className="bg-background/75 border-border rounded-2xl border p-3 grid gap-2 text-sm">
+                        <section className="bg-background/75 border-border mt-3 rounded-2xl border p-3 grid gap-2 text-sm">
                           <h3 className="text-base font-semibold">Actions</h3>
                           {(game.phase === "bidding-round-1" ||
                             game.phase === "bidding-round-2") && (
@@ -1066,7 +1074,7 @@ function EuchreRouteComponent() {
                         </section>
                       )}
 
-                      <section className="grid gap-2">
+                      <section className="mt-3 grid gap-2">
                         <h3 className="text-base font-semibold">Your Hand</h3>
                         {state.you ? (
                           <div className="overflow-x-auto pb-2">
@@ -1141,7 +1149,7 @@ function EuchreRouteComponent() {
                       </section>
                     </>
                   ) : (
-                    <p className="text-muted-foreground text-sm">
+                    <p className="text-muted-foreground mt-3 text-sm">
                       Waiting for all 4 players to join before dealing.
                     </p>
                   )}

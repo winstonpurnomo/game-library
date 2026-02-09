@@ -1,19 +1,19 @@
-import { ChevronRightIcon } from "lucide-react"
+import { ChevronRightIcon } from "lucide-react";
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/utils";
 
 export type MenuSelectorItem = {
-  title: string
-  description: string
-  link: string
-}
+  title: string;
+  description: string;
+  link: string;
+};
 
 function MenuSelector({
   items,
   className,
 }: {
-  items: MenuSelectorItem[]
-  className?: string
+  items: MenuSelectorItem[];
+  className?: string;
 }) {
   return (
     <nav
@@ -21,13 +21,16 @@ function MenuSelector({
       aria-label="Game selection"
       className={cn("w-full max-w-2xl", className)}
     >
-      <ul className="grid gap-2">
+      <ul className="border-border bg-game-surface-1 shadow-game-card overflow-hidden rounded-3xl border">
         {items.map((item) => (
-          <li key={item.title}>
+          <li
+            key={item.title}
+            className="border-border border-b last:border-b-0"
+          >
             <a
               href={item.link}
               className={cn(
-                "group/game-option bg-game-surface-1 border-border shadow-game-card hover:bg-game-surface-2 hover:border-game-accent/45 focus-visible:ring-game-highlight/45 focus-visible:ring-[3px] flex items-center justify-between gap-4 rounded-[var(--radius-game-card)] border px-4 py-3 text-left transition-[background-color,border-color,transform,box-shadow] duration-[var(--game-motion-base)] hover:-translate-y-0.5 focus-visible:outline-hidden"
+                "group/game-option hover:bg-game-surface-2 focus-visible:ring-game-highlight/45 focus-visible:ring-[3px] flex items-center justify-between gap-4 px-5 py-4 text-left transition-[background-color,color] duration-[var(--game-motion-base)] focus-visible:outline-hidden"
               )}
             >
               <span className="grid gap-1">
@@ -47,7 +50,7 @@ function MenuSelector({
         ))}
       </ul>
     </nav>
-  )
+  );
 }
 
-export { MenuSelector }
+export { MenuSelector };

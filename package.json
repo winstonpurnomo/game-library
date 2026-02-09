@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "ultracite check",
-    "fix": "ultracite fix"
+    "fix": "ultracite fix",
+    "prepare": "husky"
   },
   "dependencies": {
     "@base-ui/react": "^1.1.0",
@@ -38,6 +39,8 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.0",
     "globals": "^17.3.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
     "oxfmt": "^0.28.0",
     "oxlint": "^1.43.0",
     "shadcn": "^3.8.4",
@@ -50,5 +53,13 @@
   },
   "overrides": {
     "vite": "^8.0.0-beta.13"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [
+      "oxfmt --write",
+      "oxlint --fix",
+      "oxlint"
+    ],
+    "*.{json,jsonc,css,scss,md,mdx,yml,yaml,html}": "oxfmt --write"
   }
 }

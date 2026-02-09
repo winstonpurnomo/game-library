@@ -164,7 +164,8 @@ function parseMode(value: string): RoomMode {
 }
 
 function getServerHttpOrigin() {
-  const configured = import.meta.env.VITE_MULTIPLAYER_SERVER_ORIGIN?.trim();
+  console.log(`meta: ${JSON.stringify(import.meta.env)}`);
+  const configured = import.meta.env.VITE_SERVER_URL?.trim();
   if (configured) {
     return configured.replace(/\/$/, "");
   }
@@ -301,26 +302,24 @@ function sortHand(cards: Card[], trump: Suit | null) {
   });
 }
 
-function TableCard({
-  card,
-  size = "md",
-}: {
-  card: Card;
-  size?: "sm" | "md";
-}) {
+function TableCard({ card, size = "md" }: { card: Card; size?: "sm" | "md" }) {
   const sizeClass = size === "sm" ? "w-14 md:w-16" : "w-18 md:w-20";
 
   return (
     <div
       className={`${sizeClass} rounded-xl border border-slate-300 bg-white p-1 text-center shadow-xl`}
     >
-      <p className={`text-xs leading-none font-semibold ${suitColorClass(card.suit)}`}>
+      <p
+        className={`text-xs leading-none font-semibold ${suitColorClass(card.suit)}`}
+      >
         {card.rank} {SUIT_SYMBOLS[card.suit]}
       </p>
       <p className={`py-1 text-2xl leading-none ${suitColorClass(card.suit)}`}>
         {SUIT_SYMBOLS[card.suit]}
       </p>
-      <p className={`text-xs leading-none font-semibold ${suitColorClass(card.suit)}`}>
+      <p
+        className={`text-xs leading-none font-semibold ${suitColorClass(card.suit)}`}
+      >
         {card.rank} {SUIT_SYMBOLS[card.suit]}
       </p>
     </div>
@@ -449,7 +448,9 @@ function EuchreRouteComponent() {
         params.set("create", "1");
       }
 
-      const ws = new WebSocket(`${serverWsOrigin}/websocket?${params.toString()}`);
+      const ws = new WebSocket(
+        `${serverWsOrigin}/websocket?${params.toString()}`
+      );
       wsRef.current = ws;
 
       ws.addEventListener("open", () => {
@@ -561,8 +562,8 @@ function EuchreRouteComponent() {
       return null;
     }
     return (
-      state.players.find((player) => player.seatIndex === game.turnSeat)?.name ??
-      null
+      state.players.find((player) => player.seatIndex === game.turnSeat)
+        ?.name ?? null
     );
   }, [game, state]);
   const handTricksByTeam = useMemo(() => {
@@ -757,7 +758,11 @@ function EuchreRouteComponent() {
             <section className="grid gap-2">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="text-base font-semibold">Open rooms</h2>
-                <Button size="sm" variant="outline" onClick={() => refreshRooms()}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => refreshRooms()}
+                >
                   Refresh
                 </Button>
               </div>
@@ -771,7 +776,9 @@ function EuchreRouteComponent() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{room.name}</p>
+                          <p className="truncate text-sm font-medium">
+                            {room.name}
+                          </p>
                           <p className="text-muted-foreground text-xs">
                             {room.status === "playing" ? "In game" : "Lobby"} •{" "}
                             {room.players}/{room.maxPlayers} players
@@ -799,7 +806,9 @@ function EuchreRouteComponent() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-muted-foreground text-sm">No rooms available.</p>
+                <p className="text-muted-foreground text-sm">
+                  No rooms available.
+                </p>
               )}
               {roomListError ? (
                 <p className="text-game-danger text-sm">{roomListError}</p>
@@ -863,7 +872,9 @@ function EuchreRouteComponent() {
                         </span>
                       </div>
                       <Popover>
-                        <PopoverTrigger render={<Button size="sm" variant="secondary" />}>
+                        <PopoverTrigger
+                          render={<Button size="sm" variant="secondary" />}
+                        >
                           Menu
                         </PopoverTrigger>
                         <PopoverContent align="end" className="w-44 gap-2 p-2">
@@ -897,7 +908,10 @@ function EuchreRouteComponent() {
                     </div>
 
                     {[2, 1, 3, 0].map((relativeSeat) => {
-                      const seatIndex = getAbsoluteSeat(anchorSeat, relativeSeat);
+                      const seatIndex = getAbsoluteSeat(
+                        anchorSeat,
+                        relativeSeat
+                      );
                       const player = state.players.find(
                         (item) => item.seatIndex === seatIndex
                       );
@@ -930,10 +944,8 @@ function EuchreRouteComponent() {
                                   {isDealerSeat ? "Dealer" : "Player"}
                                 </p>
                                 <p className="text-white/80">
-                                  Team {player.seatIndex % 2 === 0 ? "A" : "B"} •
-                                  {" "}
-                                  {player.handCount} cards •
-                                  {" "}
+                                  Team {player.seatIndex % 2 === 0 ? "A" : "B"}{" "}
+                                  • {player.handCount} cards •{" "}
                                   {player.connected ? "Online" : "Offline"}
                                 </p>
                               </>
@@ -949,7 +961,10 @@ function EuchreRouteComponent() {
                       <div className="relative size-full rounded-full border border-white/25 bg-emerald-900/25">
                         {game?.currentTrick.length ? (
                           [0, 1, 2, 3].map((relativeSeat) => {
-                            const seatIndex = getAbsoluteSeat(anchorSeat, relativeSeat);
+                            const seatIndex = getAbsoluteSeat(
+                              anchorSeat,
+                              relativeSeat
+                            );
                             const play = trickBySeat.get(seatIndex);
                             if (!play) {
                               return null;
@@ -1056,7 +1071,9 @@ function EuchreRouteComponent() {
                             </p>
                           ) : null}
                           {game.phase === "hand-over" ? (
-                            <Button onClick={() => sendAction("start-next-hand")}>
+                            <Button
+                              onClick={() => sendAction("start-next-hand")}
+                            >
                               Start Next Hand
                             </Button>
                           ) : null}
@@ -1067,8 +1084,9 @@ function EuchreRouteComponent() {
                           ) : null}
                           {game.handSummary ? (
                             <p className="text-muted-foreground text-xs">
-                              Team {game.handSummary.awardedTo === 0 ? "A" : "B"} earned{" "}
-                              {game.handSummary.pointsAwarded} point(s).
+                              Team{" "}
+                              {game.handSummary.awardedTo === 0 ? "A" : "B"}{" "}
+                              earned {game.handSummary.pointsAwarded} point(s).
                             </p>
                           ) : null}
                         </section>
@@ -1082,12 +1100,15 @@ function EuchreRouteComponent() {
                               {sortedMyHand.map((card, index) => {
                                 const canPlay = legalPlaySet.has(card.id);
                                 const playEnabled =
-                                  game.phase === "playing" && isMyTurn && canPlay;
+                                  game.phase === "playing" &&
+                                  isMyTurn &&
+                                  canPlay;
                                 const discardEnabled =
                                   game.phase === "dealer-discard" &&
                                   isMyTurn &&
                                   canPlay;
-                                const cardEnabled = playEnabled || discardEnabled;
+                                const cardEnabled =
+                                  playEnabled || discardEnabled;
                                 const rotation =
                                   (index - (sortedMyHand.length - 1) / 2) * 5;
 
@@ -1099,16 +1120,24 @@ function EuchreRouteComponent() {
                                     disabled={!cardEnabled}
                                     onClick={() => {
                                       if (game.phase === "dealer-discard") {
-                                        sendAction("discard", { cardId: card.id });
+                                        sendAction("discard", {
+                                          cardId: card.id,
+                                        });
                                       } else {
-                                        sendAction("play-card", { cardId: card.id });
+                                        sendAction("play-card", {
+                                          cardId: card.id,
+                                        });
                                       }
                                     }}
-                                    style={{ transform: `rotate(${rotation}deg)` }}
+                                    style={{
+                                      transform: `rotate(${rotation}deg)`,
+                                    }}
                                   >
                                     <GameCard
                                       size="sm"
-                                      variant={cardEnabled ? "active" : "default"}
+                                      variant={
+                                        cardEnabled ? "active" : "default"
+                                      }
                                       className={[
                                         "w-20 bg-white p-2",
                                         cardEnabled

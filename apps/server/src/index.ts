@@ -17,6 +17,7 @@ type PlayerState = {
   name: string;
   seatIndex: number;
   connected: boolean;
+  isBot: boolean;
   hand: Card[];
 };
 
@@ -57,6 +58,8 @@ type EuchreGameState = {
   trump: Suit | null;
   makerTeam: TeamId | null;
   calledByPlayerId: string | null;
+  goingAlonePlayerId: string | null;
+  sittingOutSeat: number | null;
   currentTrick: TrickPlay[];
   completedTricks: CompletedTrick[];
   trickIndex: number;
@@ -67,10 +70,14 @@ type EuchreGameState = {
 type EuchreRoom = {
   name: string;
   password: string | null;
+  creatorToken: string;
+  creatorPlayerId: string | null;
   createdAt: number;
   updatedAt: number;
   maxPlayers: number;
   status: "waiting" | "playing";
+  botDifficulty: BotDifficulty;
+  botCount: number;
   score: {
     team0: number;
     team1: number;
@@ -85,6 +92,38 @@ type SessionAttachment = {
   playerId: string;
 };
 
+type BotDifficulty = "easy" | "medium" | "hard";
+
+type BotAction =
+  | {
+      action: "pass" | "order-up" | "start-next-hand" | "restart-match";
+      alone?: boolean;
+    }
+  | {
+      action: "choose-trump";
+      suit: Suit;
+      alone?: boolean;
+    }
+  | {
+      action: "discard" | "play-card";
+      cardId: string;
+    };
+
+type SimulatedPlayState = {
+  turnSeat: number;
+  trump: Suit;
+  trickIndex: number;
+  currentTrick: {
+    seatIndex: number;
+    card: Card;
+  }[];
+  handsBySeat: Map<number, Card[]>;
+  tricksByTeam: {
+    team0: number;
+    team1: number;
+  };
+};
+
 type ClientEnvelope =
   | {
       type: "action";
@@ -95,9 +134,18 @@ type ClientEnvelope =
         | "discard"
         | "play-card"
         | "start-next-hand"
-        | "restart-match";
+        | "restart-match"
+        | "add-bot"
+        | "remove-bot"
+        | "set-seat"
+        | "set-bot-difficulty"
+        | "start-room";
       suit?: Suit;
       cardId?: string;
+      alone?: boolean;
+      seatIndex?: number;
+      targetPlayerId?: string;
+      botDifficulty?: BotDifficulty;
     }
   | { type: "ping" };
 
@@ -111,11 +159,57 @@ const SUITS: Suit[] = ["clubs", "diamonds", "hearts", "spades"];
 const ROOM_SIZE = 4;
 const TARGET_SCORE = 10;
 const ROOM_TTL_MS = 60 * 60 * 1000;
+const BOT_NAMES = [
+  "Atlas",
+  "Rook",
+  "Vega",
+  "Nova",
+  "Kite",
+  "Echo",
+  "Orion",
+  "Mira",
+];
+const CREATOR_TOKEN_HEADER = "x-euchre-creator-token";
+
+const DIFFICULTY_SETTINGS: Record<
+  BotDifficulty,
+  {
+    sampleCount: number;
+    searchDepth: number;
+    randomMoveRate: number;
+    bidThreshold: number;
+  }
+> = {
+  easy: {
+    sampleCount: 4,
+    searchDepth: 2,
+    randomMoveRate: 0.35,
+    bidThreshold: 45,
+  },
+  medium: {
+    sampleCount: 8,
+    searchDepth: 4,
+    randomMoveRate: 0.12,
+    bidThreshold: 20,
+  },
+  hard: {
+    sampleCount: 16,
+    searchDepth: 8,
+    randomMoveRate: 0,
+    bidThreshold: -5,
+  },
+};
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 function buildCorsHeaders(origin: string | null) {
   return {
     "Access-Control-Allow-Origin": origin ?? "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     Vary: "Origin",
   };
@@ -127,6 +221,24 @@ function sanitizeRoomName(roomName: string | null) {
 
 function sanitizePlayerName(name: string | null) {
   return (name ?? "").trim().slice(0, 24);
+}
+
+function parseBotDifficulty(value: string | null): BotDifficulty {
+  if (value === "easy" || value === "medium" || value === "hard") {
+    return value;
+  }
+  return "medium";
+}
+
+function parseSeatIndex(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) {
+    return null;
+  }
+  const seat = Math.floor(value);
+  if (seat < 0 || seat >= ROOM_SIZE) {
+    return null;
+  }
+  return seat;
 }
 
 function getTeamForSeat(seatIndex: number): TeamId {
@@ -252,6 +364,7 @@ function jsonResponse(data: unknown, init?: ResponseInit) {
 export class WebSocketHibernationServer extends DurableObject {
   sessions: Map<WebSocket, SessionAttachment>;
   rooms: Map<string, EuchreRoom>;
+  autoAdvanceInFlight: Set<string>;
   ready: Promise<void>;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -259,6 +372,7 @@ export class WebSocketHibernationServer extends DurableObject {
 
     this.sessions = new Map();
     this.rooms = new Map();
+    this.autoAdvanceInFlight = new Set();
 
     this.ctx.getWebSockets().forEach((ws) => {
       const attachment = ws.deserializeAttachment();
@@ -281,8 +395,16 @@ export class WebSocketHibernationServer extends DurableObject {
     this.rooms = new Map(Object.entries(persistedRooms ?? {}));
 
     this.rooms.forEach((room) => {
+      room.botDifficulty = room.botDifficulty ?? "medium";
+      room.botCount = room.botCount ?? 0;
+      room.creatorToken = room.creatorToken ?? crypto.randomUUID();
+      room.creatorPlayerId =
+        room.creatorPlayerId ??
+        room.players.find((player) => !player.isBot)?.id ??
+        null;
       room.players.forEach((player) => {
-        player.connected = false;
+        player.isBot = player.isBot ?? false;
+        player.connected = player.isBot;
       });
     });
 
@@ -336,6 +458,9 @@ export class WebSocketHibernationServer extends DurableObject {
         name: room.name,
         players: room.players.length,
         maxPlayers: room.maxPlayers,
+        botCount: room.botCount,
+        botDifficulty: room.botDifficulty,
+        creatorPlayerId: room.creatorPlayerId,
         hasPassword: Boolean(room.password),
         status: room.status,
         createdAt: room.createdAt,
@@ -343,15 +468,22 @@ export class WebSocketHibernationServer extends DurableObject {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  isCreator(room: EuchreRoom, viewerPlayerId: string) {
+    return room.creatorPlayerId === viewerPlayerId;
+  }
+
   buildClientState(room: EuchreRoom, viewerPlayerId: string) {
     const me =
       room.players.find((player) => player.id === viewerPlayerId) ?? null;
     const legalPlays = me ? this.getLegalPlays(room, me.id) : [];
+    const viewerIsCreator = this.isCreator(room, viewerPlayerId);
 
     return {
       roomName: room.name,
       maxPlayers: room.maxPlayers,
       status: room.status,
+      botDifficulty: room.botDifficulty,
+      botCount: room.botCount,
       score: room.score,
       players: [...room.players]
         .sort((a, b) => a.seatIndex - b.seatIndex)
@@ -360,6 +492,7 @@ export class WebSocketHibernationServer extends DurableObject {
           name: player.name,
           seatIndex: player.seatIndex,
           connected: player.connected,
+          isBot: player.isBot,
           handCount: player.hand.length,
         })),
       you: me
@@ -367,6 +500,8 @@ export class WebSocketHibernationServer extends DurableObject {
             id: me.id,
             name: me.name,
             seatIndex: me.seatIndex,
+            isCreator: viewerIsCreator,
+            creatorToken: viewerIsCreator ? room.creatorToken : null,
             hand: me.hand,
           }
         : null,
@@ -394,6 +529,8 @@ export class WebSocketHibernationServer extends DurableObject {
             handSummary: room.game.handSummary,
             makerTeam: room.game.makerTeam,
             calledByPlayerId: room.game.calledByPlayerId,
+            goingAlonePlayerId: room.game.goingAlonePlayerId,
+            sittingOutSeat: room.game.sittingOutSeat,
             calledByName:
               room.players.find(
                 (player) => player.id === room.game?.calledByPlayerId
@@ -460,6 +597,10 @@ export class WebSocketHibernationServer extends DurableObject {
       return [];
     }
 
+    if (!this.isPlayerActiveForPlay(room, player)) {
+      return [];
+    }
+
     if (room.game.phase === "dealer-discard") {
       return player.hand.map((card) => card.id);
     }
@@ -494,6 +635,44 @@ export class WebSocketHibernationServer extends DurableObject {
 
   getPlayerById(room: EuchreRoom, playerId: string) {
     return room.players.find((player) => player.id === playerId) ?? null;
+  }
+
+  isSeatSittingOut(room: EuchreRoom, seatIndex: number) {
+    const sittingOutSeat = room.game?.sittingOutSeat;
+    if (sittingOutSeat === null || sittingOutSeat === undefined) {
+      return false;
+    }
+    return sittingOutSeat === seatIndex;
+  }
+
+  isPlayerActiveForPlay(room: EuchreRoom, player: PlayerState) {
+    if (!room.game || room.game.phase !== "playing") {
+      return true;
+    }
+    return !this.isSeatSittingOut(room, player.seatIndex);
+  }
+
+  nextActiveSeat(room: EuchreRoom, fromSeat: number) {
+    for (let index = 0; index < ROOM_SIZE; index += 1) {
+      const seat = (fromSeat + index + 1) % ROOM_SIZE;
+      if (!this.isSeatSittingOut(room, seat)) {
+        return seat;
+      }
+    }
+    return nextSeat(fromSeat);
+  }
+
+  activeSeatCountForPlay(room: EuchreRoom) {
+    const sittingOutSeat = room.game?.sittingOutSeat;
+    return sittingOutSeat === null || sittingOutSeat === undefined
+      ? ROOM_SIZE
+      : ROOM_SIZE - 1;
+  }
+
+  assertCreator(room: EuchreRoom, playerId: string) {
+    if (room.creatorPlayerId !== playerId) {
+      throw new Error("Only the room creator can do that.");
+    }
   }
 
   startNewHand(room: EuchreRoom, dealerSeat?: number, resetScore = false) {
@@ -536,6 +715,8 @@ export class WebSocketHibernationServer extends DurableObject {
       trump: null,
       makerTeam: null,
       calledByPlayerId: null,
+      goingAlonePlayerId: null,
+      sittingOutSeat: null,
       currentTrick: [],
       completedTricks: [],
       trickIndex: 0,
@@ -557,7 +738,7 @@ export class WebSocketHibernationServer extends DurableObject {
     }
 
     game.phase = "playing";
-    game.turnSeat = nextSeat(game.dealerSeat);
+    game.turnSeat = this.nextActiveSeat(room, game.dealerSeat);
     game.currentTrick = [];
     game.completedTricks = [];
     game.trickIndex = 0;
@@ -585,7 +766,11 @@ export class WebSocketHibernationServer extends DurableObject {
 
     if (makerTricks >= 3) {
       awardedTo = makerTeam;
-      pointsAwarded = makerTricks === 5 ? 2 : 1;
+      if (makerTricks === 5 && game.goingAlonePlayerId) {
+        pointsAwarded = 4;
+      } else {
+        pointsAwarded = makerTricks === 5 ? 2 : 1;
+      }
     } else {
       awardedTo = defenderTeam;
       pointsAwarded = 2;
@@ -610,6 +795,19 @@ export class WebSocketHibernationServer extends DurableObject {
           : null;
 
     game.phase = winningTeam === null ? "hand-over" : "game-over";
+    const awardedLabel = awardedTo === 0 ? "A" : "B";
+    if (winningTeam === null) {
+      this.sendInfo(
+        room.name,
+        `Hand over: Team ${awardedLabel} earned ${pointsAwarded} point(s).`
+      );
+    } else {
+      const winnerLabel = winningTeam === 0 ? "A" : "B";
+      this.sendInfo(
+        room.name,
+        `Team ${winnerLabel} wins the match ${room.score.team0}-${room.score.team1}.`
+      );
+    }
     room.updatedAt = Date.now();
   }
 
@@ -629,6 +827,654 @@ export class WebSocketHibernationServer extends DurableObject {
     });
 
     return winner.playerId;
+  }
+
+  resolveTrickWinnerSeat(
+    cards: {
+      seatIndex: number;
+      card: Card;
+    }[],
+    trump: Suit
+  ) {
+    const leadSuit = effectiveSuit(cards[0].card, trump);
+
+    let winner = cards[0];
+    let bestScore = rankStrength(cards[0].card, trump, leadSuit);
+
+    cards.slice(1).forEach((play) => {
+      const score = rankStrength(play.card, trump, leadSuit);
+      if (score > bestScore) {
+        winner = play;
+        bestScore = score;
+      }
+    });
+
+    return winner.seatIndex;
+  }
+
+  getLegalPlaysForCards(
+    hand: Card[],
+    currentTrick: { seatIndex: number; card: Card }[],
+    trump: Suit
+  ) {
+    if (currentTrick.length === 0) {
+      return [...hand];
+    }
+
+    const leadSuit = effectiveSuit(currentTrick[0].card, trump);
+    const followSuitCards = hand.filter(
+      (card) => effectiveSuit(card, trump) === leadSuit
+    );
+
+    if (followSuitCards.length === 0) {
+      return [...hand];
+    }
+
+    return followSuitCards;
+  }
+
+  cardFaceKey(card: Card) {
+    return `${card.suit}-${card.rank}`;
+  }
+
+  makeCardFromFace(face: string) {
+    const [suit, rank] = face.split("-") as [Suit, Rank];
+    return {
+      id: `${face}-sim`,
+      suit,
+      rank,
+    } satisfies Card;
+  }
+
+  inferVoidSuitsBySeat(room: EuchreRoom) {
+    const result = new Map<number, Set<Suit>>();
+    const trump = room.game?.trump;
+    if (!trump) {
+      return result;
+    }
+
+    const inspectTrick = (trick: TrickPlay[]) => {
+      if (trick.length < 2) {
+        return;
+      }
+
+      const leader = this.getPlayerById(room, trick[0].playerId);
+      if (!leader) {
+        return;
+      }
+
+      const leadSuit = effectiveSuit(trick[0].card, trump);
+      trick.slice(1).forEach((play) => {
+        const player = this.getPlayerById(room, play.playerId);
+        if (!player) {
+          return;
+        }
+
+        const playedSuit = effectiveSuit(play.card, trump);
+        if (playedSuit === leadSuit) {
+          return;
+        }
+
+        const missing = result.get(player.seatIndex) ?? new Set<Suit>();
+        missing.add(leadSuit);
+        result.set(player.seatIndex, missing);
+      });
+    };
+
+    room.game?.completedTricks.forEach((trick) => inspectTrick(trick.cards));
+    inspectTrick(room.game?.currentTrick ?? []);
+
+    return result;
+  }
+
+  listAllCardFaces() {
+    return SUITS.flatMap((suit) => RANKS.map((rank) => `${suit}-${rank}`));
+  }
+
+  buildVisibleFaceSet(room: EuchreRoom, botId: string) {
+    const visibleFaces = new Set<string>();
+
+    const bot = this.getPlayerById(room, botId);
+    bot?.hand.forEach((card) => visibleFaces.add(this.cardFaceKey(card)));
+
+    room.game?.completedTricks.forEach((trick) => {
+      trick.cards.forEach((play) => visibleFaces.add(this.cardFaceKey(play.card)));
+    });
+    room.game?.currentTrick.forEach((play) =>
+      visibleFaces.add(this.cardFaceKey(play.card))
+    );
+
+    return visibleFaces;
+  }
+
+  shuffleFaces(faces: string[]) {
+    const shuffled = [...faces];
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      const temp = shuffled[index];
+      shuffled[index] = shuffled[swapIndex];
+      shuffled[swapIndex] = temp;
+    }
+    return shuffled;
+  }
+
+  assignFacesWithVoidConstraints(
+    faces: string[],
+    seats: number[],
+    handSizesBySeat: Map<number, number>,
+    voidSuitsBySeat: Map<number, Set<Suit>>
+  ) {
+    const assignment = new Map<number, string[]>();
+    seats.forEach((seat) => assignment.set(seat, []));
+
+    const available = this.shuffleFaces(faces);
+    const pendingSeats = seats.filter((seat) => (handSizesBySeat.get(seat) ?? 0) > 0);
+
+    let safety = 0;
+    while (pendingSeats.length > 0 && safety < 200) {
+      safety += 1;
+
+      pendingSeats.sort(
+        (left, right) =>
+          (handSizesBySeat.get(right) ?? 0) - (handSizesBySeat.get(left) ?? 0)
+      );
+      const seat = pendingSeats[0];
+      const need = handSizesBySeat.get(seat) ?? 0;
+      if (need <= 0) {
+        pendingSeats.shift();
+        continue;
+      }
+
+      const banned = voidSuitsBySeat.get(seat) ?? new Set<Suit>();
+      const candidateIndex = available.findIndex((face) => {
+        const [suit] = face.split("-") as [Suit, Rank];
+        return !banned.has(suit);
+      });
+
+      const pickedIndex = candidateIndex >= 0 ? candidateIndex : 0;
+      const [picked] = available.splice(pickedIndex, 1);
+      if (!picked) {
+        break;
+      }
+
+      const cards = assignment.get(seat);
+      if (!cards) {
+        break;
+      }
+      cards.push(picked);
+      handSizesBySeat.set(seat, need - 1);
+    }
+
+    return assignment;
+  }
+
+  buildSampledPlayState(room: EuchreRoom, bot: PlayerState) {
+    const game = room.game;
+    if (!game || !game.trump) {
+      return null;
+    }
+
+    const botTeam = getTeamForSeat(bot.seatIndex);
+    const allFaces = this.listAllCardFaces();
+    const visibleFaces = this.buildVisibleFaceSet(room, bot.id);
+    const unseenFaces = allFaces.filter((face) => !visibleFaces.has(face));
+
+    const voidSuitsBySeat = this.inferVoidSuitsBySeat(room);
+    const handsBySeat = new Map<number, Card[]>();
+    const handSizesBySeat = new Map<number, number>();
+    const opponentSeats: number[] = [];
+
+    room.players.forEach((player) => {
+      if (player.id === bot.id) {
+        handsBySeat.set(player.seatIndex, [...player.hand]);
+        return;
+      }
+      handSizesBySeat.set(player.seatIndex, player.hand.length);
+      opponentSeats.push(player.seatIndex);
+    });
+
+    const faceAssignment = this.assignFacesWithVoidConstraints(
+      unseenFaces,
+      opponentSeats,
+      new Map(handSizesBySeat),
+      voidSuitsBySeat
+    );
+
+    opponentSeats.forEach((seat) => {
+      const assignedFaces = faceAssignment.get(seat) ?? [];
+      const cards = assignedFaces.map((face) => this.makeCardFromFace(face));
+      handsBySeat.set(seat, cards);
+    });
+
+    const tricksByTeam = game.completedTricks.reduce(
+      (accumulator, trick) => {
+        const winnerTeam = getTeamForSeat(trick.winnerSeat);
+        if (winnerTeam === 0) {
+          accumulator.team0 += 1;
+        } else {
+          accumulator.team1 += 1;
+        }
+        return accumulator;
+      },
+      {
+        team0: 0,
+        team1: 0,
+      }
+    );
+
+    return {
+      state: {
+        turnSeat: game.turnSeat,
+        trump: game.trump,
+        trickIndex: game.trickIndex,
+        currentTrick: game.currentTrick.map((play) => ({
+          seatIndex: this.getPlayerById(room, play.playerId)?.seatIndex ?? -1,
+          card: play.card,
+        })),
+        handsBySeat,
+        tricksByTeam,
+      } satisfies SimulatedPlayState,
+      botTeam,
+    };
+  }
+
+  estimateCardValue(card: Card, trump: Suit) {
+    const asLead = rankStrength(card, trump, card.suit);
+    return asLead;
+  }
+
+  evaluateSimulatedState(state: SimulatedPlayState, botTeam: TeamId) {
+    const trickDelta =
+      botTeam === 0
+        ? state.tricksByTeam.team0 - state.tricksByTeam.team1
+        : state.tricksByTeam.team1 - state.tricksByTeam.team0;
+
+    let handDelta = 0;
+    state.handsBySeat.forEach((hand, seat) => {
+      const team = getTeamForSeat(seat);
+      const multiplier = team === botTeam ? 1 : -1;
+      hand.forEach((card) => {
+        handDelta += multiplier * this.estimateCardValue(card, state.trump);
+      });
+    });
+
+    return trickDelta * 100 + handDelta * 0.1;
+  }
+
+  cloneSimulatedState(state: SimulatedPlayState): SimulatedPlayState {
+    return {
+      turnSeat: state.turnSeat,
+      trump: state.trump,
+      trickIndex: state.trickIndex,
+      currentTrick: state.currentTrick.map((play) => ({
+        seatIndex: play.seatIndex,
+        card: play.card,
+      })),
+      handsBySeat: new Map(
+        [...state.handsBySeat.entries()].map(([seat, hand]) => [seat, [...hand]])
+      ),
+      tricksByTeam: {
+        team0: state.tricksByTeam.team0,
+        team1: state.tricksByTeam.team1,
+      },
+    };
+  }
+
+  applySimulatedPlay(state: SimulatedPlayState, seat: number, card: Card) {
+    const hand = state.handsBySeat.get(seat) ?? [];
+    const index = hand.findIndex(
+      (item) => item.id === card.id && item.suit === card.suit && item.rank === card.rank
+    );
+    if (index >= 0) {
+      hand.splice(index, 1);
+    }
+    state.handsBySeat.set(seat, hand);
+
+    state.currentTrick.push({
+      seatIndex: seat,
+      card,
+    });
+
+    if (state.currentTrick.length < ROOM_SIZE) {
+      state.turnSeat = nextSeat(seat);
+      return;
+    }
+
+    const winnerSeat = this.resolveTrickWinnerSeat(state.currentTrick, state.trump);
+    const winnerTeam = getTeamForSeat(winnerSeat);
+    if (winnerTeam === 0) {
+      state.tricksByTeam.team0 += 1;
+    } else {
+      state.tricksByTeam.team1 += 1;
+    }
+
+    state.currentTrick = [];
+    state.turnSeat = winnerSeat;
+    state.trickIndex += 1;
+  }
+
+  minimaxPlay(
+    state: SimulatedPlayState,
+    depth: number,
+    botTeam: TeamId,
+    alpha: number,
+    beta: number
+  ): number {
+    const totalTricks = state.tricksByTeam.team0 + state.tricksByTeam.team1;
+    const anyCardsLeft = [...state.handsBySeat.values()].some((hand) => hand.length > 0);
+    if (depth <= 0 || totalTricks >= 5 || !anyCardsLeft) {
+      return this.evaluateSimulatedState(state, botTeam);
+    }
+
+    const seat = state.turnSeat;
+    const hand = state.handsBySeat.get(seat) ?? [];
+    const legalMoves = this.getLegalPlaysForCards(hand, state.currentTrick, state.trump);
+    if (legalMoves.length === 0) {
+      return this.evaluateSimulatedState(state, botTeam);
+    }
+
+    const maximizing = getTeamForSeat(seat) === botTeam;
+    if (maximizing) {
+      let value = Number.NEGATIVE_INFINITY;
+      for (const move of legalMoves) {
+        const nextState = this.cloneSimulatedState(state);
+        this.applySimulatedPlay(nextState, seat, move);
+        value = Math.max(
+          value,
+          this.minimaxPlay(nextState, depth - 1, botTeam, alpha, beta)
+        );
+        alpha = Math.max(alpha, value);
+        if (beta <= alpha) {
+          break;
+        }
+      }
+      return value;
+    }
+
+    let value = Number.POSITIVE_INFINITY;
+    for (const move of legalMoves) {
+      const nextState = this.cloneSimulatedState(state);
+      this.applySimulatedPlay(nextState, seat, move);
+      value = Math.min(
+        value,
+        this.minimaxPlay(nextState, depth - 1, botTeam, alpha, beta)
+      );
+      beta = Math.min(beta, value);
+      if (beta <= alpha) {
+        break;
+      }
+    }
+    return value;
+  }
+
+  chooseCardViaMinimax(
+    room: EuchreRoom,
+    bot: PlayerState,
+    candidateCards: Card[],
+    difficulty: BotDifficulty
+  ) {
+    const settings = DIFFICULTY_SETTINGS[difficulty];
+    if (candidateCards.length === 0) {
+      return null;
+    }
+
+    if (Math.random() < settings.randomMoveRate) {
+      const randomIndex = Math.floor(Math.random() * candidateCards.length);
+      return candidateCards[randomIndex] ?? null;
+    }
+
+    const scoreByCardId = new Map<string, number>();
+    candidateCards.forEach((card) => scoreByCardId.set(card.id, 0));
+
+    for (let sample = 0; sample < settings.sampleCount; sample += 1) {
+      const sampled = this.buildSampledPlayState(room, bot);
+      if (!sampled) {
+        continue;
+      }
+
+      const baseState = sampled.state;
+      const botTeam = sampled.botTeam;
+
+      candidateCards.forEach((candidate) => {
+        const nextState = this.cloneSimulatedState(baseState);
+        this.applySimulatedPlay(nextState, bot.seatIndex, candidate);
+        const score = this.minimaxPlay(
+          nextState,
+          settings.searchDepth - 1,
+          botTeam,
+          Number.NEGATIVE_INFINITY,
+          Number.POSITIVE_INFINITY
+        );
+        scoreByCardId.set(
+          candidate.id,
+          (scoreByCardId.get(candidate.id) ?? 0) + score
+        );
+      });
+    }
+
+    let bestCard = candidateCards[0];
+    let bestScore = Number.NEGATIVE_INFINITY;
+    candidateCards.forEach((card) => {
+      const score = scoreByCardId.get(card.id) ?? Number.NEGATIVE_INFINITY;
+      if (score > bestScore) {
+        bestCard = card;
+        bestScore = score;
+      }
+    });
+
+    return bestCard;
+  }
+
+  estimateBidScoreViaMinimax(room: EuchreRoom, bot: PlayerState, trump: Suit) {
+    const game = room.game;
+    if (!game) {
+      return Number.NEGATIVE_INFINITY;
+    }
+
+    const settings = DIFFICULTY_SETTINGS[room.botDifficulty];
+    const original = {
+      trump: game.trump,
+      turnSeat: game.turnSeat,
+      currentTrick: game.currentTrick,
+      completedTricks: game.completedTricks,
+      trickIndex: game.trickIndex,
+    };
+
+    game.trump = trump;
+    game.turnSeat = nextSeat(game.dealerSeat);
+    game.currentTrick = [];
+    game.completedTricks = [];
+    game.trickIndex = 0;
+
+    let totalScore = 0;
+    let samples = 0;
+    const sampleCount = Math.max(2, Math.floor(settings.sampleCount / 2));
+
+    for (let sample = 0; sample < sampleCount; sample += 1) {
+      const sampled = this.buildSampledPlayState(room, bot);
+      if (!sampled) {
+        continue;
+      }
+      const score = this.minimaxPlay(
+        sampled.state,
+        settings.searchDepth,
+        sampled.botTeam,
+        Number.NEGATIVE_INFINITY,
+        Number.POSITIVE_INFINITY
+      );
+      totalScore += score;
+      samples += 1;
+    }
+
+    game.trump = original.trump;
+    game.turnSeat = original.turnSeat;
+    game.currentTrick = original.currentTrick;
+    game.completedTricks = original.completedTricks;
+    game.trickIndex = original.trickIndex;
+
+    if (samples === 0) {
+      return 0;
+    }
+
+    return totalScore / samples;
+  }
+
+  chooseBidAction(room: EuchreRoom, bot: PlayerState): BotAction {
+    const game = room.game;
+    if (!game) {
+      return { action: "pass" };
+    }
+
+    if (game.phase === "bidding-round-1") {
+      const trump = game.upcard?.suit;
+      if (!trump) {
+        return { action: "pass" };
+      }
+      const strength = this.estimateBidScoreViaMinimax(room, bot, trump);
+      const threshold = DIFFICULTY_SETTINGS[room.botDifficulty].bidThreshold;
+      if (strength >= threshold) {
+        return {
+          action: "order-up",
+          alone: strength >= threshold + 80,
+        };
+      }
+      return { action: "pass" };
+    }
+
+    if (game.phase === "bidding-round-2") {
+      const candidateSuits = SUITS.filter((suit) => suit !== game.blockedSuit);
+      let bestSuit: Suit | null = null;
+      let bestScore = Number.NEGATIVE_INFINITY;
+      candidateSuits.forEach((suit) => {
+        const score = this.estimateBidScoreViaMinimax(room, bot, suit);
+        if (score > bestScore) {
+          bestScore = score;
+          bestSuit = suit;
+        }
+      });
+
+      if (!bestSuit) {
+        return { action: "pass" };
+      }
+
+      const threshold = DIFFICULTY_SETTINGS[room.botDifficulty].bidThreshold;
+      if (bestScore >= threshold) {
+        return {
+          action: "choose-trump",
+          suit: bestSuit,
+          alone: bestScore >= threshold + 80,
+        };
+      }
+
+      return { action: "pass" };
+    }
+
+    return { action: "pass" };
+  }
+
+  chooseDiscardAction(room: EuchreRoom, bot: PlayerState): BotAction | null {
+    if (!room.game?.trump) {
+      return null;
+    }
+    const chosen = this.chooseCardViaMinimax(
+      room,
+      bot,
+      [...bot.hand],
+      room.botDifficulty
+    );
+    if (!chosen) {
+      return null;
+    }
+    return {
+      action: "discard",
+      cardId: chosen.id,
+    };
+  }
+
+  choosePlayAction(room: EuchreRoom, bot: PlayerState): BotAction | null {
+    const legalPlayIds = this.getLegalPlays(room, bot.id);
+    const legalCards = bot.hand.filter((card) => legalPlayIds.includes(card.id));
+    if (legalCards.length === 0) {
+      return null;
+    }
+
+    if (room.game?.goingAlonePlayerId) {
+      return {
+        action: "play-card",
+        cardId: legalCards[0].id,
+      };
+    }
+
+    const chosen = this.chooseCardViaMinimax(
+      room,
+      bot,
+      legalCards,
+      room.botDifficulty
+    );
+
+    return {
+      action: "play-card",
+      cardId: (chosen ?? legalCards[0]).id,
+    };
+  }
+
+  chooseBotAction(room: EuchreRoom, bot: PlayerState): BotAction | null {
+    const game = room.game;
+    if (!game) {
+      return null;
+    }
+
+    if (game.phase === "bidding-round-1" || game.phase === "bidding-round-2") {
+      return this.chooseBidAction(room, bot);
+    }
+
+    if (game.phase === "dealer-discard") {
+      return this.chooseDiscardAction(room, bot);
+    }
+
+    if (game.phase === "playing") {
+      return this.choosePlayAction(room, bot);
+    }
+
+    if (game.phase === "hand-over") {
+      return { action: "start-next-hand" };
+    }
+
+    if (game.phase === "game-over") {
+      return null;
+    }
+
+    return null;
+  }
+
+  executeBotAction(room: EuchreRoom, bot: PlayerState, action: BotAction) {
+    if (action.action === "pass") {
+      this.handlePass(room, bot.id);
+      return;
+    }
+    if (action.action === "order-up") {
+      this.handleOrderUp(room, bot.id, Boolean(action.alone));
+      return;
+    }
+    if (action.action === "choose-trump") {
+      this.handleChooseTrump(room, bot.id, action.suit, Boolean(action.alone));
+      return;
+    }
+    if (action.action === "discard") {
+      this.handleDiscard(room, bot.id, action.cardId);
+      return;
+    }
+    if (action.action === "play-card") {
+      this.handlePlayCard(room, bot.id, action.cardId);
+      return;
+    }
+    if (action.action === "start-next-hand") {
+      this.handleStartNextHand(room);
+      return;
+    }
+    if (action.action === "restart-match") {
+      this.handleRestartMatch(room);
+    }
   }
 
   handlePass(room: EuchreRoom, playerId: string) {
@@ -676,7 +1522,7 @@ export class WebSocketHibernationServer extends DurableObject {
     throw new Error("Pass is not available right now.");
   }
 
-  handleOrderUp(room: EuchreRoom, playerId: string) {
+  handleOrderUp(room: EuchreRoom, playerId: string, alone = false) {
     const { game } = room;
     if (!game || game.phase !== "bidding-round-1") {
       throw new Error("Order up is only available in bidding round one.");
@@ -701,17 +1547,30 @@ export class WebSocketHibernationServer extends DurableObject {
     game.trump = game.upcard.suit;
     game.makerTeam = getTeamForSeat(currentPlayer.seatIndex);
     game.calledByPlayerId = playerId;
+    game.goingAlonePlayerId = alone ? playerId : null;
+    game.sittingOutSeat = alone
+      ? room.players.find(
+          (player) =>
+            getTeamForSeat(player.seatIndex) === game.makerTeam &&
+            player.id !== playerId
+        )?.seatIndex ?? null
+      : null;
     game.turnSeat = dealer.seatIndex;
     game.currentTrick = [];
     game.completedTricks = [];
     game.trickIndex = 0;
+    this.sendInfo(
+      room.name,
+      `${currentPlayer.name} ordered up ${game.trump ? game.trump : "trump"}${alone ? " and is going alone." : "."}`
+    );
     room.updatedAt = Date.now();
   }
 
   handleChooseTrump(
     room: EuchreRoom,
     playerId: string,
-    suit: Suit | undefined
+    suit: Suit | undefined,
+    alone = false
   ) {
     const { game } = room;
     if (!game || game.phase !== "bidding-round-2") {
@@ -734,6 +1593,18 @@ export class WebSocketHibernationServer extends DurableObject {
     game.trump = suit;
     game.makerTeam = getTeamForSeat(currentPlayer.seatIndex);
     game.calledByPlayerId = playerId;
+    game.goingAlonePlayerId = alone ? playerId : null;
+    game.sittingOutSeat = alone
+      ? room.players.find(
+          (player) =>
+            getTeamForSeat(player.seatIndex) === game.makerTeam &&
+            player.id !== playerId
+        )?.seatIndex ?? null
+      : null;
+    this.sendInfo(
+      room.name,
+      `${currentPlayer.name} called ${suit} as trump${alone ? " and is going alone." : "."}`
+    );
     this.startPlayingPhase(room);
   }
 
@@ -775,6 +1646,9 @@ export class WebSocketHibernationServer extends DurableObject {
     if (!currentPlayer || currentPlayer.id !== playerId) {
       throw new Error("Not your turn.");
     }
+    if (!this.isPlayerActiveForPlay(room, currentPlayer)) {
+      throw new Error("This player is sitting out this hand.");
+    }
 
     if (!cardId) {
       throw new Error("Card id is required.");
@@ -795,8 +1669,9 @@ export class WebSocketHibernationServer extends DurableObject {
     const [card] = currentPlayer.hand.splice(handIndex, 1);
     game.currentTrick.push({ playerId, card });
 
-    if (game.currentTrick.length < ROOM_SIZE) {
-      game.turnSeat = nextSeat(game.turnSeat);
+    const requiredPlayers = this.activeSeatCountForPlay(room);
+    if (game.currentTrick.length < requiredPlayers) {
+      game.turnSeat = this.nextActiveSeat(room, game.turnSeat);
       room.updatedAt = Date.now();
       return;
     }
@@ -813,6 +1688,10 @@ export class WebSocketHibernationServer extends DurableObject {
     if (!winner) {
       throw new Error("Unable to resolve trick winner.");
     }
+    this.sendInfo(
+      room.name,
+      `${winner.name} won trick ${game.trickIndex + 1}.`
+    );
 
     game.completedTricks.push({
       index: game.trickIndex,
@@ -856,44 +1735,256 @@ export class WebSocketHibernationServer extends DurableObject {
     this.startNewHand(room, nextSeat(room.game.dealerSeat), true);
   }
 
-  autoAdvanceDisconnectedTurn(room: EuchreRoom) {
+  nextBotName(room: EuchreRoom) {
+    const existing = new Set(room.players.map((player) => player.name));
+    for (let index = 0; index < 100; index += 1) {
+      const base = BOT_NAMES[index % BOT_NAMES.length];
+      const suffix = index >= BOT_NAMES.length ? ` ${Math.floor(index / BOT_NAMES.length) + 2}` : "";
+      const name = `${base} Bot${suffix}`;
+      if (!existing.has(name)) {
+        return name;
+      }
+    }
+    return `Bot ${crypto.randomUUID().slice(0, 6)}`;
+  }
+
+  handleAddBot(room: EuchreRoom, playerId: string) {
+    this.assertCreator(room, playerId);
+    if (room.status !== "waiting" || room.game !== null) {
+      throw new Error("Bots can only be changed in lobby.");
+    }
+    if (room.players.length >= ROOM_SIZE) {
+      throw new Error("Room is already full.");
+    }
+
+    const occupiedSeats = new Set(room.players.map((player) => player.seatIndex));
+    const seatIndex = [...Array(ROOM_SIZE).keys()].find(
+      (seat) => !occupiedSeats.has(seat)
+    );
+    if (seatIndex === undefined) {
+      throw new Error("No seat available.");
+    }
+
+    room.players.push({
+      id: crypto.randomUUID(),
+      name: this.nextBotName(room),
+      seatIndex,
+      connected: true,
+      isBot: true,
+      hand: [],
+    });
+    room.botCount = room.players.filter((player) => player.isBot).length;
+    room.updatedAt = Date.now();
+  }
+
+  handleRemoveBot(room: EuchreRoom, playerId: string) {
+    this.assertCreator(room, playerId);
+    if (room.status !== "waiting" || room.game !== null) {
+      throw new Error("Bots can only be changed in lobby.");
+    }
+    const botCandidates = room.players
+      .filter((player) => player.isBot)
+      .sort((left, right) => right.seatIndex - left.seatIndex);
+    const bot = botCandidates[0];
+    if (!bot) {
+      throw new Error("No bots to remove.");
+    }
+    room.players = room.players.filter((player) => player.id !== bot.id);
+    room.botCount = room.players.filter((player) => player.isBot).length;
+    room.updatedAt = Date.now();
+  }
+
+  handleSetSeat(
+    room: EuchreRoom,
+    playerId: string,
+    targetPlayerId: string | undefined,
+    requestedSeatIndex: number | undefined
+  ) {
+    this.assertCreator(room, playerId);
+    if (room.status !== "waiting" || room.game !== null) {
+      throw new Error("Teams can only be configured in lobby.");
+    }
+    if (!targetPlayerId) {
+      throw new Error("Target player is required.");
+    }
+    const seatIndex = parseSeatIndex(requestedSeatIndex);
+    if (seatIndex === null) {
+      throw new Error("Invalid seat index.");
+    }
+
+    const target = this.getPlayerById(room, targetPlayerId);
+    if (!target) {
+      throw new Error("Target player not found.");
+    }
+
+    const occupant = this.getSeatPlayer(room, seatIndex);
+    const currentSeat = target.seatIndex;
+    target.seatIndex = seatIndex;
+    if (occupant && occupant.id !== target.id) {
+      occupant.seatIndex = currentSeat;
+    }
+    room.updatedAt = Date.now();
+  }
+
+  handleSetBotDifficulty(
+    room: EuchreRoom,
+    playerId: string,
+    botDifficulty: BotDifficulty | undefined
+  ) {
+    this.assertCreator(room, playerId);
+    if (room.status !== "waiting" || room.game !== null) {
+      throw new Error("Difficulty can only be changed in lobby.");
+    }
+    if (!botDifficulty) {
+      throw new Error("Bot difficulty is required.");
+    }
+    room.botDifficulty = botDifficulty;
+    room.updatedAt = Date.now();
+  }
+
+  handleStartRoom(room: EuchreRoom, playerId: string) {
+    this.assertCreator(room, playerId);
+    if (room.status !== "waiting" || room.game !== null) {
+      throw new Error("Room already started.");
+    }
+    if (room.players.length !== ROOM_SIZE) {
+      throw new Error("Need exactly four players/bots before starting.");
+    }
+    this.startNewHand(room);
+    this.sendInfo(room.name, "Room started. Hand 1 is starting.");
+  }
+
+  getBotThinkDelay(room: EuchreRoom) {
+    if (room.botDifficulty === "easy") {
+      return 1600;
+    }
+    if (room.botDifficulty === "medium") {
+      return 1300;
+    }
+    return 1050;
+  }
+
+  autoAdvanceOneTurn(room: EuchreRoom) {
     const { game } = room;
     if (!game) {
+      return false;
+    }
+
+    if (game.phase === "game-over") {
+      return false;
+    }
+
+    if (game.phase === "hand-over") {
+      if (!room.players.some((player) => player.isBot)) {
+        return false;
+      }
+      this.handleStartNextHand(room);
+      return true;
+    }
+
+    const currentPlayer = this.getSeatPlayer(room, game.turnSeat);
+    if (!currentPlayer) {
+      return false;
+    }
+
+    if (currentPlayer.isBot) {
+      const botAction = this.chooseBotAction(room, currentPlayer);
+      if (!botAction) {
+        return false;
+      }
+      this.executeBotAction(room, currentPlayer, botAction);
+      return true;
+    }
+
+    if (currentPlayer.connected) {
+      return false;
+    }
+
+    if (game.phase === "bidding-round-1" || game.phase === "bidding-round-2") {
+      this.handlePass(room, currentPlayer.id);
+      return true;
+    }
+
+    if (game.phase === "dealer-discard") {
+      const fallbackCardId = currentPlayer.hand[0]?.id;
+      if (!fallbackCardId) {
+        return false;
+      }
+      this.handleDiscard(room, currentPlayer.id, fallbackCardId);
+      return true;
+    }
+
+    if (game.phase === "playing") {
+      const legalPlays = this.getLegalPlays(room, currentPlayer.id);
+      const [fallbackCardId] = legalPlays;
+      if (!fallbackCardId) {
+        return false;
+      }
+      this.handlePlayCard(room, currentPlayer.id, fallbackCardId);
+      return true;
+    }
+
+    return false;
+  }
+
+  queueAutoAdvance(roomName: string) {
+    if (this.autoAdvanceInFlight.has(roomName)) {
       return;
     }
 
-    // Avoid infinite loops if the state is malformed.
-    for (let index = 0; index < 32; index += 1) {
-      const currentPlayer = this.getSeatPlayer(room, game.turnSeat);
-      if (!currentPlayer || currentPlayer.connected) {
+    this.autoAdvanceInFlight.add(roomName);
+    this.ctx.waitUntil(
+      this.runAutoAdvance(roomName).finally(() => {
+        this.autoAdvanceInFlight.delete(roomName);
+      })
+    );
+  }
+
+  shouldDelayBeforeAutoAction(room: EuchreRoom) {
+    const game = room.game;
+    if (!game || game.phase === "game-over") {
+      return false;
+    }
+
+    if (game.phase === "hand-over") {
+      return true;
+    }
+
+    const currentPlayer = this.getSeatPlayer(room, game.turnSeat);
+    if (!currentPlayer) {
+      return false;
+    }
+
+    return currentPlayer.isBot;
+  }
+
+  async runAutoAdvance(roomName: string) {
+    for (let index = 0; index < 64; index += 1) {
+      const room = this.rooms.get(roomName);
+      if (!room) {
         return;
       }
 
-      if (game.phase === "bidding-round-1" || game.phase === "bidding-round-2") {
-        this.handlePass(room, currentPlayer.id);
-        continue;
-      }
-
-      if (game.phase === "dealer-discard") {
-        const fallbackCardId = currentPlayer.hand[0]?.id;
-        if (!fallbackCardId) {
-          return;
+      if (this.shouldDelayBeforeAutoAction(room)) {
+        if (room.game?.phase === "hand-over") {
+          await sleep(3600);
+        } else {
+          await sleep(this.getBotThinkDelay(room));
         }
-        this.handleDiscard(room, currentPlayer.id, fallbackCardId);
-        continue;
       }
 
-      if (game.phase === "playing") {
-        const legalPlays = this.getLegalPlays(room, currentPlayer.id);
-        const [fallbackCardId] = legalPlays;
-        if (!fallbackCardId) {
-          return;
-        }
-        this.handlePlayCard(room, currentPlayer.id, fallbackCardId);
-        continue;
+      const acted = this.autoAdvanceOneTurn(room);
+      if (!acted) {
+        return;
       }
 
-      return;
+      await this.persistRooms();
+      this.broadcastRoom(roomName);
+
+      const phase = room.game?.phase;
+      if (!phase || phase === "game-over") {
+        return;
+      }
     }
   }
 
@@ -908,12 +1999,17 @@ export class WebSocketHibernationServer extends DurableObject {
     }
 
     if (message.action === "order-up") {
-      this.handleOrderUp(room, playerId);
+      this.handleOrderUp(room, playerId, Boolean(message.alone));
       return;
     }
 
     if (message.action === "choose-trump") {
-      this.handleChooseTrump(room, playerId, message.suit);
+      this.handleChooseTrump(
+        room,
+        playerId,
+        message.suit,
+        Boolean(message.alone)
+      );
       return;
     }
 
@@ -937,6 +2033,31 @@ export class WebSocketHibernationServer extends DurableObject {
       return;
     }
 
+    if (message.action === "add-bot") {
+      this.handleAddBot(room, playerId);
+      return;
+    }
+
+    if (message.action === "remove-bot") {
+      this.handleRemoveBot(room, playerId);
+      return;
+    }
+
+    if (message.action === "set-seat") {
+      this.handleSetSeat(room, playerId, message.targetPlayerId, message.seatIndex);
+      return;
+    }
+
+    if (message.action === "set-bot-difficulty") {
+      this.handleSetBotDifficulty(room, playerId, message.botDifficulty);
+      return;
+    }
+
+    if (message.action === "start-room") {
+      this.handleStartRoom(room, playerId);
+      return;
+    }
+
     throw new Error("Unsupported action.");
   }
 
@@ -946,6 +2067,12 @@ export class WebSocketHibernationServer extends DurableObject {
     const playerName = sanitizePlayerName(url.searchParams.get("name"));
     const password = (url.searchParams.get("password") ?? "").trim();
     const createRoom = url.searchParams.get("create") === "1";
+    const requestedBotDifficulty = parseBotDifficulty(
+      url.searchParams.get("botDifficulty")
+    );
+    const providedCreatorToken =
+      (url.searchParams.get("creatorToken") ?? "").trim() ||
+      (request.headers.get(CREATOR_TOKEN_HEADER) ?? "").trim();
 
     if (!roomName) {
       return jsonResponse(
@@ -967,7 +2094,11 @@ export class WebSocketHibernationServer extends DurableObject {
 
     const existingRoom = this.rooms.get(roomName);
 
-    if (createRoom && existingRoom) {
+    if (
+      createRoom &&
+      existingRoom &&
+      (!providedCreatorToken || providedCreatorToken !== existingRoom.creatorToken)
+    ) {
       return jsonResponse(
         {
           error: "Room already exists. Join it instead.",
@@ -988,10 +2119,14 @@ export class WebSocketHibernationServer extends DurableObject {
     const room: EuchreRoom = existingRoom ?? {
       name: roomName,
       password: password || null,
+      creatorToken: providedCreatorToken || crypto.randomUUID(),
+      creatorPlayerId: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       maxPlayers: ROOM_SIZE,
       status: "waiting",
+      botDifficulty: requestedBotDifficulty ?? "medium",
+      botCount: 0,
       score: {
         team0: 0,
         team1: 0,
@@ -1015,6 +2150,14 @@ export class WebSocketHibernationServer extends DurableObject {
 
     let playerId: string;
     if (existingPlayer) {
+      if (existingPlayer.isBot) {
+        return jsonResponse(
+          {
+            error: "That player name is reserved.",
+          },
+          { status: 409 }
+        );
+      }
       if (existingPlayer.connected) {
         return jsonResponse(
           {
@@ -1058,12 +2201,22 @@ export class WebSocketHibernationServer extends DurableObject {
         name: playerName,
         seatIndex,
         connected: true,
+        isBot: false,
         hand: [],
       });
     }
 
     room.updatedAt = Date.now();
     this.rooms.set(roomName, room);
+
+    if (!existingRoom) {
+      room.creatorPlayerId = playerId;
+      if (!providedCreatorToken) {
+        room.creatorToken = crypto.randomUUID();
+      }
+    } else if (providedCreatorToken && providedCreatorToken === room.creatorToken) {
+      room.creatorPlayerId = playerId;
+    }
 
     const webSocketPair = new WebSocketPair();
     const [client, server] = Object.values(webSocketPair);
@@ -1080,19 +2233,46 @@ export class WebSocketHibernationServer extends DurableObject {
     server.serializeAttachment(attachment);
     this.sessions.set(server, attachment);
 
-    if (room.players.length === ROOM_SIZE && room.game === null) {
-      this.startNewHand(room);
-      this.sendInfo(roomName, "All four players joined. Hand 1 is starting.");
-    }
-
-    this.autoAdvanceDisconnectedTurn(room);
-
     await this.persistRooms();
     this.broadcastRoom(roomName);
+    this.queueAutoAdvance(roomName);
 
     return new Response(null, {
       status: 101,
       webSocket: client,
+    });
+  }
+
+  async deleteRoom(roomName: string, creatorToken: string) {
+    const room = this.rooms.get(roomName);
+    if (!room) {
+      return jsonResponse(
+        {
+          error: "Room not found.",
+        },
+        { status: 404 }
+      );
+    }
+
+    if (!creatorToken || creatorToken !== room.creatorToken) {
+      return jsonResponse(
+        {
+          error: "Only the room creator can delete this room.",
+        },
+        { status: 403 }
+      );
+    }
+
+    this.rooms.delete(roomName);
+    this.sessions.forEach((session, ws) => {
+      if (session.roomName === roomName) {
+        ws.close(1001, "Room deleted by creator");
+      }
+    });
+    await this.persistRooms();
+
+    return jsonResponse({
+      ok: true,
     });
   }
 
@@ -1125,6 +2305,42 @@ export class WebSocketHibernationServer extends DurableObject {
       );
     }
 
+    if (url.pathname.startsWith("/rooms/")) {
+      if (request.method !== "DELETE") {
+        return new Response("Method not allowed", {
+          status: 405,
+          headers: corsHeaders,
+        });
+      }
+      const roomName = sanitizeRoomName(
+        decodeURIComponent(url.pathname.slice("/rooms/".length))
+      );
+      if (!roomName) {
+        return jsonResponse(
+          {
+            error: "Room name is required.",
+          },
+          {
+            status: 400,
+            headers: corsHeaders,
+          }
+        );
+      }
+
+      const creatorToken =
+        (url.searchParams.get("creatorToken") ?? "").trim() ||
+        (request.headers.get(CREATOR_TOKEN_HEADER) ?? "").trim();
+      const response = await this.deleteRoom(roomName, creatorToken);
+      const existingHeaders = new Headers(response.headers);
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        existingHeaders.set(key, value);
+      });
+      return new Response(response.body, {
+        status: response.status,
+        headers: existingHeaders,
+      });
+    }
+
     if (url.pathname === "/websocket") {
       const upgradeHeader = request.headers.get("Upgrade");
       if (!upgradeHeader || upgradeHeader !== "websocket") {
@@ -1145,7 +2361,7 @@ export class WebSocketHibernationServer extends DurableObject {
     }
 
     return new Response(
-      "Supported endpoints:\n/rooms\n/websocket?room=<room>&name=<name>&password=<optional>&create=1",
+      "Supported endpoints:\n/rooms\nDELETE /rooms/<room>?creatorToken=<token>\n/websocket?room=<room>&name=<name>&password=<optional>&create=1&creatorToken=<optional>&botDifficulty=<easy|medium|hard>",
       {
         status: 200,
         headers: {
@@ -1191,9 +2407,9 @@ export class WebSocketHibernationServer extends DurableObject {
 
     try {
       this.handleAction(room, session.playerId, payload);
-      this.autoAdvanceDisconnectedTurn(room);
       await this.persistRooms();
       this.broadcastRoom(session.roomName);
+      this.queueAutoAdvance(session.roomName);
     } catch (error) {
       this.sendToSocket(ws, {
         type: "error",
@@ -1224,10 +2440,10 @@ export class WebSocketHibernationServer extends DurableObject {
     }
 
     room.updatedAt = Date.now();
-    this.autoAdvanceDisconnectedTurn(room);
 
     await this.persistRooms();
     this.broadcastRoom(room.name);
+    this.queueAutoAdvance(room.name);
   }
 }
 

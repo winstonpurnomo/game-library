@@ -25,16 +25,21 @@ type ListedRoom = {
   name: string;
   players: number;
   maxPlayers: number;
+  botCount: number;
+  botDifficulty: BotDifficulty;
   hasPassword: boolean;
   status: "waiting" | "playing";
   createdAt: number;
 };
+
+type BotDifficulty = "easy" | "medium" | "hard";
 
 type PlayerSnapshot = {
   id: string;
   name: string;
   seatIndex: number;
   connected: boolean;
+  isBot: boolean;
   handCount: number;
 };
 
@@ -77,6 +82,8 @@ type GameSnapshot = {
   handSummary: HandSummary | null;
   makerTeam: 0 | 1 | null;
   calledByPlayerId: string | null;
+  goingAlonePlayerId: string | null;
+  sittingOutSeat: number | null;
   calledByName: string | null;
   handNumber: number;
 };
@@ -85,6 +92,8 @@ type RoomState = {
   roomName: string;
   maxPlayers: number;
   status: "waiting" | "playing";
+  botDifficulty: BotDifficulty;
+  botCount: number;
   score: {
     team0: number;
     team1: number;
@@ -94,11 +103,24 @@ type RoomState = {
     id: string;
     name: string;
     seatIndex: number;
+    isCreator: boolean;
+    creatorToken: string | null;
     hand: Card[];
   } | null;
   game: GameSnapshot | null;
   legalPlays: string[];
   targetScore: number;
+};
+
+type CapturedTrick = {
+  handNumber: number;
+  trickIndex: number;
+  winnerSeat: number;
+  winnerName: string;
+  cards: {
+    seatIndex: number;
+    card: Card;
+  }[];
 };
 
 type ServerMessage =
@@ -124,6 +146,7 @@ type EuchreSearch = {
   name: string;
   room: string;
   password: string;
+  autoJoin: boolean;
 };
 
 const SUIT_LABELS: Record<Suit, string> = {
@@ -142,6 +165,9 @@ const SUIT_SYMBOLS: Record<Suit, string> = {
 function readString(value: unknown) {
   if (typeof value === "string") {
     return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
   }
   return "";
 }
@@ -162,6 +188,19 @@ function parseMode(value: string): RoomMode {
   }
   return "join";
 }
+
+function parseBoolean(value: string) {
+  return value === "1" || value.toLowerCase() === "true";
+}
+
+function parseBotDifficulty(value: string): BotDifficulty {
+  if (value === "easy" || value === "medium" || value === "hard") {
+    return value;
+  }
+  return "medium";
+}
+
+const CREATOR_ROOMS_STORAGE_KEY = "euchre-creator-room-tokens";
 
 function getServerHttpOrigin() {
   const configured = import.meta.env.VITE_SERVER_URL?.trim();
@@ -355,6 +394,19 @@ function trickCardPositionClass(relativeSeat: number) {
   return "right-1 top-1/2 -translate-y-1/2";
 }
 
+function trickCaptureTargetClass(relativeSeat: number) {
+  if (relativeSeat === 0) {
+    return "translate-y-16";
+  }
+  if (relativeSeat === 1) {
+    return "-translate-x-18";
+  }
+  if (relativeSeat === 2) {
+    return "-translate-y-16";
+  }
+  return "translate-x-18";
+}
+
 function EuchreRouteComponent() {
   const navigate = useNavigate({ from: "/games/euchre" });
   const search = Route.useSearch();
@@ -368,6 +420,48 @@ function EuchreRouteComponent() {
   const [connectionText, setConnectionText] = useState("Disconnected");
   const [state, setState] = useState<RoomState | null>(null);
   const [connectVersion, setConnectVersion] = useState(0);
+  const [creatorRoomTokens, setCreatorRoomTokens] = useState<
+    Record<string, string>
+  >({});
+  const [capturedTrick, setCapturedTrick] = useState<CapturedTrick | null>(
+    null
+  );
+  const [capturedTrickMoving, setCapturedTrickMoving] = useState(false);
+  const [capturedTrickShowWinner, setCapturedTrickShowWinner] = useState(false);
+  const [upcardPickup, setUpcardPickup] = useState<{
+    handNumber: number;
+    dealerSeat: number;
+    card: Card;
+  } | null>(null);
+  const [upcardPickupMoving, setUpcardPickupMoving] = useState(false);
+  const [goAloneChoice, setGoAloneChoice] = useState(false);
+  const capturedTrickKeyRef = useRef("");
+  const upcardPickupKeyRef = useRef("");
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectStartedAtRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(CREATOR_ROOMS_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      setCreatorRoomTokens(parsed);
+    } catch {
+      setCreatorRoomTokens({});
+    }
+  }, []);
+
+  const persistCreatorTokens = useCallback((next: Record<string, string>) => {
+    setCreatorRoomTokens(next);
+    try {
+      window.localStorage.setItem(CREATOR_ROOMS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore storage failures.
+    }
+  }, []);
 
   const serverHttpOrigin = useMemo(() => getServerHttpOrigin(), []);
   const serverWsOrigin = useMemo(
@@ -398,14 +492,115 @@ function EuchreRouteComponent() {
     }
   }, [fetchRooms]);
 
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const resetReconnectState = useCallback(() => {
+    clearReconnectTimer();
+    reconnectStartedAtRef.current = null;
+    reconnectAttemptRef.current = 0;
+  }, [clearReconnectTimer]);
+
+  const scheduleAutoReconnect = useCallback(() => {
+    if (search.step !== "game") {
+      return;
+    }
+
+    const now = Date.now();
+    if (reconnectStartedAtRef.current === null) {
+      reconnectStartedAtRef.current = now;
+      reconnectAttemptRef.current = 0;
+    }
+
+    const elapsed = now - reconnectStartedAtRef.current;
+    const maxWindowMs = 5 * 60 * 1000;
+    if (elapsed >= maxWindowMs) {
+      setStatusText(
+        "Disconnected. Auto reconnect stopped after 5 minutes. Press Reconnect."
+      );
+      clearReconnectTimer();
+      return;
+    }
+
+    reconnectAttemptRef.current += 1;
+    const delaySeconds = reconnectAttemptRef.current * 5;
+    if (elapsed + delaySeconds * 1000 > maxWindowMs) {
+      setStatusText(
+        "Disconnected. Auto reconnect stopped after 5 minutes. Press Reconnect."
+      );
+      clearReconnectTimer();
+      return;
+    }
+
+    setStatusText(
+      `Disconnected. Reconnecting in ${delaySeconds}s (attempt ${reconnectAttemptRef.current}).`
+    );
+
+    clearReconnectTimer();
+    reconnectTimerRef.current = window.setTimeout(() => {
+      setConnectionText("Connecting...");
+      setConnectVersion((value) => value + 1);
+    }, delaySeconds * 1000);
+  }, [clearReconnectTimer, search.step]);
+
+  const deleteRoom = useCallback(
+    async (roomName: string) => {
+      const creatorToken = creatorRoomTokens[roomName];
+      if (!creatorToken) {
+        setRoomListError("Missing creator token for this room.");
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `${serverHttpOrigin}/rooms/${encodeURIComponent(roomName)}?creatorToken=${encodeURIComponent(creatorToken)}`,
+          {
+            method: "DELETE",
+          }
+        );
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          setRoomListError(
+            payload?.error ?? `Failed to delete room (${response.status}).`
+          );
+          return;
+        }
+
+        const next = { ...creatorRoomTokens };
+        delete next[roomName];
+        persistCreatorTokens(next);
+        setRoomListError("");
+        refreshRooms();
+      } catch {
+        setRoomListError("Unable to delete room.");
+      }
+    },
+    [creatorRoomTokens, persistCreatorTokens, refreshRooms, serverHttpOrigin]
+  );
+
   const disconnect = useCallback(() => {
+    clearReconnectTimer();
     const ws = wsRef.current;
     if (ws) {
       wsRef.current = null;
       ws.close(1000, "Client disconnected");
     }
     setConnectionText("Disconnected");
-  }, []);
+  }, [clearReconnectTimer]);
+
+  const manualReconnect = useCallback(() => {
+    resetReconnectState();
+    setStatusText("Reconnecting...");
+    setConnectionText("Connecting...");
+    setConnectVersion((value) => value + 1);
+  }, [resetReconnectState]);
 
   useEffect(() => {
     refreshRooms();
@@ -421,6 +616,47 @@ function EuchreRouteComponent() {
   const trimmedName = search.name.trim();
   const trimmedRoom = search.room.trim();
   const trimmedPassword = search.password.trim();
+  const creatorTokenForCurrentRoom = creatorRoomTokens[trimmedRoom] ?? "";
+  const createRoomNameTaken = useMemo(() => {
+    if (search.mode !== "create" || trimmedRoom === "") {
+      return false;
+    }
+    return rooms.some(
+      (room) => room.name.toLowerCase() === trimmedRoom.toLowerCase()
+    );
+  }, [rooms, search.mode, trimmedRoom]);
+
+  const shareRoomLink = useCallback(async () => {
+    if (typeof window === "undefined" || trimmedRoom === "") {
+      return;
+    }
+
+    const shareUrl = new URL(`${window.location.origin}/games/euchre`);
+    shareUrl.searchParams.set("step", "name");
+    shareUrl.searchParams.set("mode", "join");
+    shareUrl.searchParams.set("room", trimmedRoom);
+    shareUrl.searchParams.set("autoJoin", "1");
+    if (trimmedPassword !== "") {
+      shareUrl.searchParams.set("password", trimmedPassword);
+    }
+
+    const text = `Join my Euchre room: ${trimmedRoom}`;
+    const urlString = shareUrl.toString();
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: "Euchre Room Invite",
+          text,
+          url: urlString,
+        });
+      } else {
+        await navigator.clipboard.writeText(urlString);
+      }
+      setStatusText("Share link ready.");
+    } catch {
+      setStatusText("Unable to share room link.");
+    }
+  }, [trimmedPassword, trimmedRoom]);
 
   useEffect(() => {
     if (search.step === "game") {
@@ -443,6 +679,10 @@ function EuchreRouteComponent() {
         params.set("password", trimmedPassword);
       }
 
+      if (creatorTokenForCurrentRoom) {
+        params.set("creatorToken", creatorTokenForCurrentRoom);
+      }
+
       if (search.mode === "create") {
         params.set("create", "1");
       }
@@ -453,29 +693,67 @@ function EuchreRouteComponent() {
       wsRef.current = ws;
 
       ws.addEventListener("open", () => {
+        if (wsRef.current !== ws) {
+          return;
+        }
+        resetReconnectState();
         setConnectionText("Connected");
         setStatusText("Connected to room.");
         refreshRooms();
       });
 
       ws.addEventListener("close", () => {
+        if (wsRef.current !== ws) {
+          return;
+        }
         wsRef.current = null;
         setConnectionText("Disconnected");
-        setState(null);
+        scheduleAutoReconnect();
         refreshRooms();
       });
 
       ws.addEventListener("error", () => {
+        if (wsRef.current !== ws) {
+          return;
+        }
         setConnectionText("Disconnected");
-        setStatusText("Unable to connect to that room.");
+        setStatusText("Connection error.");
       });
 
       ws.addEventListener("message", (event) => {
+        if (wsRef.current !== ws) {
+          return;
+        }
         try {
           const payload = JSON.parse(event.data as string) as ServerMessage;
 
           if (payload.type === "state") {
             setState(payload.state);
+            if (
+              payload.state.you?.isCreator &&
+              payload.state.you.creatorToken &&
+              payload.state.roomName
+            ) {
+              const token = payload.state.you.creatorToken;
+              setCreatorRoomTokens((previous) => {
+                if (previous[payload.state.roomName] === token) {
+                  return previous;
+                }
+                const next = {
+                  ...previous,
+                  [payload.state.roomName]: token,
+                };
+                try {
+                  window.localStorage.setItem(
+                    CREATOR_ROOMS_STORAGE_KEY,
+                    JSON.stringify(next)
+                  );
+                } catch {
+                  // Ignore storage failures.
+                }
+                return next;
+              });
+            }
             return;
           }
 
@@ -498,20 +776,165 @@ function EuchreRouteComponent() {
     }
 
     disconnect();
+    resetReconnectState();
     setState(null);
   }, [
+    clearReconnectTimer,
     disconnect,
     refreshRooms,
     connectVersion,
+    resetReconnectState,
+    scheduleAutoReconnect,
     search.mode,
     search.step,
+    creatorTokenForCurrentRoom,
     serverWsOrigin,
     trimmedName,
     trimmedPassword,
     trimmedRoom,
   ]);
 
-  useEffect(() => () => disconnect(), [disconnect]);
+  useEffect(() => () => {
+    disconnect();
+    resetReconnectState();
+  }, [disconnect, resetReconnectState]);
+
+  useEffect(() => {
+    if (!state?.game || !state.you) {
+      setCapturedTrick(null);
+      setCapturedTrickMoving(false);
+      setCapturedTrickShowWinner(false);
+      return;
+    }
+
+    if (
+      state.game.phase !== "playing" &&
+      state.game.phase !== "hand-over" &&
+      state.game.phase !== "game-over"
+    ) {
+      setCapturedTrick(null);
+      setCapturedTrickMoving(false);
+      setCapturedTrickShowWinner(false);
+      return;
+    }
+
+    const latest =
+      state.game.completedTricks[state.game.completedTricks.length - 1];
+    if (!latest) {
+      setCapturedTrick(null);
+      setCapturedTrickMoving(false);
+      setCapturedTrickShowWinner(false);
+      return;
+    }
+
+    const key = `${state.game.handNumber}-${latest.index}-${latest.winnerSeat}-${latest.cards
+      .map((play) => play.card.id)
+      .join("|")}`;
+    if (capturedTrickKeyRef.current === key) {
+      return;
+    }
+    capturedTrickKeyRef.current = key;
+
+    const winnerName =
+      state.players.find((player) => player.seatIndex === latest.winnerSeat)
+        ?.name ?? "Unknown";
+
+    const cards = latest.cards
+      .map((play) => {
+        const seatIndex =
+          state.players.find((player) => player.id === play.playerId)?.seatIndex ??
+          -1;
+        return {
+          seatIndex,
+          card: play.card,
+        };
+      })
+      .filter((play) => play.seatIndex >= 0);
+
+    setCapturedTrick({
+      handNumber: state.game.handNumber,
+      trickIndex: latest.index,
+      winnerSeat: latest.winnerSeat,
+      winnerName,
+      cards,
+    });
+    setCapturedTrickMoving(false);
+    setCapturedTrickShowWinner(false);
+
+    const startTimer = window.setTimeout(() => {
+      setCapturedTrickMoving(true);
+    }, 700);
+    const showWinnerTimer = window.setTimeout(() => {
+      setCapturedTrickShowWinner(true);
+    }, 1050);
+    const clearTimer = window.setTimeout(() => {
+      setCapturedTrick(null);
+      setCapturedTrickMoving(false);
+      setCapturedTrickShowWinner(false);
+    }, 2200);
+
+    return () => {
+      window.clearTimeout(startTimer);
+      window.clearTimeout(showWinnerTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [state]);
+
+  useEffect(() => {
+    const phase = state?.game?.phase;
+    const mySeatIndex = state?.you?.seatIndex;
+    const turnSeat = state?.game?.turnSeat;
+    const inBidding =
+      phase === "bidding-round-1" || phase === "bidding-round-2";
+    const isMyBidTurn =
+      mySeatIndex !== undefined && turnSeat !== undefined && mySeatIndex === turnSeat;
+    if (!inBidding || !isMyBidTurn) {
+      setGoAloneChoice(false);
+    }
+  }, [state]);
+
+  useEffect(() => {
+    if (!state?.game || !state.you) {
+      setUpcardPickup(null);
+      setUpcardPickupMoving(false);
+      return;
+    }
+
+    const { game: currentGame } = state;
+    if (
+      currentGame.phase !== "dealer-discard" ||
+      !currentGame.upcard ||
+      !currentGame.calledByPlayerId
+    ) {
+      return;
+    }
+
+    const key = `${currentGame.handNumber}-${currentGame.calledByPlayerId}-${currentGame.upcard.id}`;
+    if (upcardPickupKeyRef.current === key) {
+      return;
+    }
+    upcardPickupKeyRef.current = key;
+
+    setUpcardPickup({
+      handNumber: currentGame.handNumber,
+      dealerSeat: currentGame.dealerSeat,
+      card: currentGame.upcard,
+    });
+    setUpcardPickupMoving(false);
+
+    const startTimer = window.setTimeout(() => {
+      setUpcardPickupMoving(true);
+    }, 30);
+    const clearTimer = window.setTimeout(() => {
+      setUpcardPickup(null);
+      setUpcardPickupMoving(false);
+    }, 1100);
+
+    return () => {
+      window.clearTimeout(startTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [state]);
 
   const sendAction = useCallback(
     (
@@ -522,10 +945,19 @@ function EuchreRouteComponent() {
         | "discard"
         | "play-card"
         | "start-next-hand"
-        | "restart-match",
+        | "restart-match"
+        | "add-bot"
+        | "remove-bot"
+        | "set-seat"
+        | "set-bot-difficulty"
+        | "start-room",
       payload?: {
         suit?: Suit;
         cardId?: string;
+        alone?: boolean;
+        seatIndex?: number;
+        targetPlayerId?: string;
+        botDifficulty?: BotDifficulty;
       }
     ) => {
       const ws = wsRef.current;
@@ -604,6 +1036,30 @@ function EuchreRouteComponent() {
       (suit) => suit !== game.blockedSuit
     );
   }, [game]);
+  const lobbyPlayers = useMemo(() => {
+    if (!state) {
+      return [] as PlayerSnapshot[];
+    }
+    const myId = state.you?.id ?? "";
+    return [...state.players].sort((left, right) => {
+      if (left.id === myId && right.id !== myId) {
+        return -1;
+      }
+      if (right.id === myId && left.id !== myId) {
+        return 1;
+      }
+      return left.name.localeCompare(right.name);
+    });
+  }, [state]);
+  const isCreator = Boolean(state?.you?.isCreator);
+  const isLobby = Boolean(state && !game);
+  const canStartRoom = Boolean(
+    state &&
+      isLobby &&
+      isCreator &&
+      state.players.length === state.maxPlayers &&
+      state.status === "waiting"
+  );
 
   if (search.step === "name") {
     return (
@@ -636,6 +1092,12 @@ function EuchreRouteComponent() {
             />
           </label>
 
+          {search.autoJoin && search.mode === "join" && search.room.trim() !== "" ? (
+            <p className="text-muted-foreground text-sm">
+              Shared room detected: <span className="font-medium">{search.room}</span>
+            </p>
+          ) : null}
+
           <div className="flex justify-end">
             <Button
               disabled={search.name.trim() === ""}
@@ -643,7 +1105,12 @@ function EuchreRouteComponent() {
                 navigate({
                   search: (previous: EuchreSearch) => ({
                     ...previous,
-                    step: "room",
+                    step:
+                      previous.autoJoin &&
+                      previous.mode === "join" &&
+                      previous.room.trim() !== ""
+                        ? "game"
+                        : "room",
                   }),
                 })
               }
@@ -750,9 +1217,16 @@ function EuchreRouteComponent() {
           </label>
 
           {roomTabIsCreate ? (
-            <p className="text-muted-foreground text-sm">
-              Create mode will create a new room with this name.
-            </p>
+            <div className="grid gap-1">
+              <p className="text-muted-foreground text-sm">
+                Create mode will open a lobby. Configure bots and teams there.
+              </p>
+              {createRoomNameTaken ? (
+                <p className="text-game-danger text-sm">
+                  Room name already exists. Choose a different name.
+                </p>
+              ) : null}
+            </div>
           ) : (
             <section className="grid gap-2">
               <div className="flex items-center justify-between gap-2">
@@ -781,25 +1255,39 @@ function EuchreRouteComponent() {
                           <p className="text-muted-foreground text-xs">
                             {room.status === "playing" ? "In game" : "Lobby"} •{" "}
                             {room.players}/{room.maxPlayers} players
+                            {room.botCount > 0
+                              ? ` • ${room.botCount} bot(s) (${room.botDifficulty})`
+                              : ""}
                             {room.hasPassword ? " • Password" : ""}
                           </p>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            navigate({
-                              search: (previous: EuchreSearch) => ({
-                                ...previous,
-                                mode: "join",
-                                room: room.name,
-                              }),
-                              replace: true,
-                            })
-                          }
-                        >
-                          Join
-                        </Button>
+                        <div className="ml-auto flex items-center justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              navigate({
+                                search: (previous: EuchreSearch) => ({
+                                  ...previous,
+                                  mode: "join",
+                                  room: room.name,
+                                }),
+                                replace: true,
+                              })
+                            }
+                          >
+                            Join
+                          </Button>
+                          {creatorRoomTokens[room.name] ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => deleteRoom(room.name)}
+                            >
+                              Delete
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                     </li>
                   ))}
@@ -817,7 +1305,10 @@ function EuchreRouteComponent() {
 
           <div className="flex justify-end">
             <Button
-              disabled={search.room.trim() === ""}
+              disabled={
+                search.room.trim() === "" ||
+                (roomTabIsCreate && createRoomNameTaken)
+              }
               onClick={() =>
                 navigate({
                   search: (previous: EuchreSearch) => ({
@@ -857,6 +1348,9 @@ function EuchreRouteComponent() {
                           : `Lobby ${state.players.length}/${state.maxPlayers}`}
                       </p>
                       <p>
+                        Bots: {state.botCount} ({state.botDifficulty})
+                      </p>
+                      <p>
                         Match: A {state.score.team0} - B {state.score.team1}
                       </p>
                     </div>
@@ -880,10 +1374,7 @@ function EuchreRouteComponent() {
                           <Button
                             size="sm"
                             className="w-full"
-                            onClick={() => {
-                              setStatusText("Reconnecting...");
-                              setConnectVersion((value) => value + 1);
-                            }}
+                            onClick={() => manualReconnect()}
                           >
                             Reconnect
                           </Button>
@@ -917,6 +1408,8 @@ function EuchreRouteComponent() {
                       const isTurnSeat = seatIndex === game?.turnSeat;
                       const isDealerSeat = seatIndex === game?.dealerSeat;
                       const isSelf = player?.id === state.you?.id;
+                      const isMaker = player?.id === game?.calledByPlayerId;
+                      const isSittingOut = seatIndex === game?.sittingOutSeat;
 
                       return (
                         <div
@@ -938,15 +1431,27 @@ function EuchreRouteComponent() {
                                     aria-hidden
                                   />
                                   {player.name}
+                                  {player.isBot ? " (Bot)" : ""}
                                 </p>
                                 <p className="text-white/80">
                                   {isDealerSeat ? "Dealer" : "Player"}
                                 </p>
                                 <p className="text-white/80">
                                   Team {player.seatIndex % 2 === 0 ? "A" : "B"}{" "}
-                                  • {player.handCount} cards •{" "}
+                                  •{" "}
+                                  {isSittingOut ? "Sitting out" : `${player.handCount} cards`} •{" "}
                                   {player.connected ? "Online" : "Offline"}
                                 </p>
+                                {isMaker && game?.trump ? (
+                                  <p className="mt-1 inline-flex items-center justify-center gap-1 rounded-full border border-amber-200/60 bg-amber-300/20 px-2 py-0.5 text-[11px] font-semibold text-amber-100">
+                                    Maker
+                                    {game.goingAlonePlayerId === player.id
+                                      ? " (Alone)"
+                                      : ""}{" "}
+                                    • {SUIT_SYMBOLS[game.trump]}{" "}
+                                    {SUIT_LABELS[game.trump]}
+                                  </p>
+                                ) : null}
                               </>
                             ) : (
                               <p className="text-white/70">Open Seat</p>
@@ -978,41 +1483,136 @@ function EuchreRouteComponent() {
                               </div>
                             );
                           })
+                        ) : game &&
+                          !capturedTrick &&
+                          !upcardPickup &&
+                          (game.phase === "bidding-round-1" ||
+                            game.phase === "bidding-round-2" ||
+                            game.phase === "dealer-discard") &&
+                          game.upcard ? (
+                          <div className="absolute inset-0 grid place-items-center">
+                            <div className="grid gap-1 text-center">
+                              <p className="text-[11px] font-semibold text-white/90 sm:text-xs">
+                                Upcard
+                              </p>
+                              <TableCard card={game.upcard} size="sm" />
+                            </div>
+                          </div>
                         ) : (
                           <div className="absolute inset-0 grid place-items-center text-center text-xs text-white/85">
                             <div>
-                              <p>Waiting for trick lead</p>
+                              <p>{game ? "Waiting for trick lead" : "Lobby"}</p>
                             </div>
                           </div>
                         )}
+
+                        {capturedTrick &&
+                        mySeat >= 0 &&
+                        (game?.phase === "playing" ||
+                          game?.phase === "hand-over" ||
+                          game?.phase === "game-over") &&
+                        (game?.currentTrick.length ?? 0) === 0 &&
+                        !upcardPickup ? (
+                          (() => {
+                            const winnerRelativeSeat =
+                              (capturedTrick.winnerSeat - mySeat + 4) % 4;
+                            return (
+                              <div
+                                className={[
+                                  "absolute inset-0 z-20 pointer-events-none transition-transform duration-700 ease-out",
+                                  capturedTrickMoving
+                                    ? trickCaptureTargetClass(winnerRelativeSeat)
+                                    : "",
+                                ].join(" ")}
+                              >
+                                {capturedTrick.cards.map((play) => {
+                                  const relativeSeat =
+                                    (play.seatIndex - mySeat + 4) % 4;
+                                  return (
+                                    <div
+                                      key={`${capturedTrick.handNumber}-${capturedTrick.trickIndex}-${play.seatIndex}-${play.card.id}`}
+                                      className={`absolute ${trickCardPositionClass(relativeSeat)}`}
+                                    >
+                                      <TableCard card={play.card} size="sm" />
+                                    </div>
+                                  );
+                                })}
+                                {capturedTrickShowWinner ? (
+                                  <p className="absolute inset-x-0 top-1 mx-auto w-max rounded-full border border-white/25 bg-black/75 px-2 py-1 text-center text-[11px] font-semibold text-white shadow-lg sm:text-xs">
+                                    Trick {capturedTrick.trickIndex + 1}:{" "}
+                                    {capturedTrick.winnerName}
+                                  </p>
+                                ) : null}
+                              </div>
+                            );
+                          })()
+                        ) : null}
+
+                        {upcardPickup &&
+                        mySeat >= 0 &&
+                        !capturedTrick &&
+                        (game?.phase === "dealer-discard" ||
+                          game?.phase === "bidding-round-1" ||
+                          game?.phase === "bidding-round-2") ? (
+                          (() => {
+                            const dealerRelativeSeat =
+                              (upcardPickup.dealerSeat - mySeat + 4) % 4;
+                            return (
+                              <div
+                                className={[
+                                  "absolute inset-0 z-20 pointer-events-none transition-transform duration-700 ease-out",
+                                  upcardPickupMoving
+                                    ? trickCaptureTargetClass(dealerRelativeSeat)
+                                    : "",
+                                ].join(" ")}
+                              >
+                                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+                                  <TableCard card={upcardPickup.card} size="sm" />
+                                </div>
+                              </div>
+                            );
+                          })()
+                        ) : null}
                       </div>
                     </div>
 
                     <div className="absolute right-4 bottom-4 rounded-2xl border border-white/30 bg-black/30 p-2 text-white shadow-lg backdrop-blur-sm">
-                      <p className="text-[11px] uppercase tracking-wide text-white/80">
-                        Trump
-                      </p>
-                      <p className="text-sm font-semibold">
-                        {game?.trump ? SUIT_LABELS[game.trump] : "Not selected"}
-                      </p>
                       <p className="mt-1 text-xs text-white/85">
                         Tricks: Team A {handTricksByTeam.teamA} - Team B{" "}
                         {handTricksByTeam.teamB}
                       </p>
-                      {game?.upcard ? (
-                        <div className="mt-2 grid gap-1">
-                          <p className="text-[11px] uppercase tracking-wide text-white/80">
-                            Upcard
-                          </p>
-                          <TableCard card={game.upcard} size="sm" />
-                        </div>
-                      ) : null}
                     </div>
                   </div>
 
                   <div className="mt-2 rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
                     {statusText}
                   </div>
+
+                  {game?.handSummary && !capturedTrick ? (
+                    <section className="mt-2 rounded-2xl border border-amber-300/70 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                      <p className="font-semibold">
+                        Hand Winner: Team{" "}
+                        {game.handSummary.awardedTo === 0 ? "A" : "B"} (+{game.handSummary.pointsAwarded})
+                      </p>
+                      <p className="text-xs">
+                        Maker team: {game.handSummary.makerTeam === 0 ? "A" : "B"} •
+                        Tricks {game.handSummary.makerTricks}-
+                        {game.handSummary.defenderTricks}
+                      </p>
+                    </section>
+                  ) : null}
+
+                  {game?.phase === "game-over" && !capturedTrick ? (
+                    <section className="mt-2 rounded-2xl border border-emerald-300/70 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+                      <p className="font-semibold">
+                        Match Winner: Team{" "}
+                        {state.score.team0 >= state.targetScore ? "A" : "B"}
+                      </p>
+                      <p className="text-xs">
+                        Final score: A {state.score.team0} - B {state.score.team1}
+                      </p>
+                    </section>
+                  ) : null}
 
                   {game ? (
                     <>
@@ -1031,7 +1631,19 @@ function EuchreRouteComponent() {
                                   ? "Your turn to bid."
                                   : `Waiting for ${currentTurnPlayerName ?? "player"} to bid.`}
                               </p>
-                              <div className="flex flex-wrap gap-2">
+                              {isMyTurn ? (
+                                <label className="inline-flex items-center justify-end gap-2 text-xs">
+                                  <span>Go alone</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={goAloneChoice}
+                                    onChange={(event) =>
+                                      setGoAloneChoice(event.target.checked)
+                                    }
+                                  />
+                                </label>
+                              ) : null}
+                              <div className="flex flex-wrap justify-end gap-2">
                                 <Button
                                   variant="secondary"
                                   disabled={!isMyTurn}
@@ -1042,7 +1654,11 @@ function EuchreRouteComponent() {
                                 {game.phase === "bidding-round-1" ? (
                                   <Button
                                     disabled={!isMyTurn}
-                                    onClick={() => sendAction("order-up")}
+                                    onClick={() =>
+                                      sendAction("order-up", {
+                                        alone: goAloneChoice,
+                                      })
+                                    }
                                   >
                                     Order Up
                                   </Button>
@@ -1052,7 +1668,10 @@ function EuchreRouteComponent() {
                                       key={suit}
                                       disabled={!isMyTurn}
                                       onClick={() =>
-                                        sendAction("choose-trump", { suit })
+                                        sendAction("choose-trump", {
+                                          suit,
+                                          alone: goAloneChoice,
+                                        })
                                       }
                                     >
                                       Call {SUIT_LABELS[suit]}
@@ -1070,16 +1689,20 @@ function EuchreRouteComponent() {
                             </p>
                           ) : null}
                           {game.phase === "hand-over" ? (
-                            <Button
-                              onClick={() => sendAction("start-next-hand")}
-                            >
-                              Start Next Hand
-                            </Button>
+                            <div className="flex justify-end">
+                              <Button
+                                onClick={() => sendAction("start-next-hand")}
+                              >
+                                Start Next Hand
+                              </Button>
+                            </div>
                           ) : null}
                           {game.phase === "game-over" ? (
-                            <Button onClick={() => sendAction("restart-match")}>
-                              Restart Match
-                            </Button>
+                            <div className="flex justify-end">
+                              <Button onClick={() => sendAction("restart-match")}>
+                                Restart Match
+                              </Button>
+                            </div>
                           ) : null}
                           {game.handSummary ? (
                             <p className="text-muted-foreground text-xs">
@@ -1177,18 +1800,144 @@ function EuchreRouteComponent() {
                       </section>
                     </>
                   ) : (
-                    <p className="text-muted-foreground mt-3 text-sm">
-                      Waiting for all 4 players to join before dealing.
-                    </p>
+                    <section className="bg-background/75 border-border mt-3 rounded-2xl border p-3 grid gap-3 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="text-base font-semibold">Lobby</h3>
+                        <div className="ml-auto flex items-center justify-end gap-2">
+                          <p className="text-muted-foreground text-xs">
+                            {state.players.length}/{state.maxPlayers} seats filled
+                          </p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => shareRoomLink()}
+                          >
+                            Share
+                          </Button>
+                        </div>
+                      </div>
+
+                      {state.you?.isCreator ? (
+                        <div className="grid gap-3">
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            <Button size="sm" onClick={() => sendAction("add-bot")}>
+                              Add Bot
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => sendAction("remove-bot")}
+                            >
+                              Remove Bot
+                            </Button>
+                            <label className="inline-flex items-center gap-2 text-xs">
+                              Difficulty
+                              <select
+                                value={state.botDifficulty}
+                                onChange={(event) =>
+                                  sendAction("set-bot-difficulty", {
+                                    botDifficulty: parseBotDifficulty(
+                                      event.target.value
+                                    ),
+                                  })
+                                }
+                                className="border-input bg-background h-8 rounded-md border px-2 text-xs"
+                              >
+                                <option value="easy">Easy</option>
+                                <option value="medium">Medium</option>
+                                <option value="hard">Hard</option>
+                              </select>
+                            </label>
+                          </div>
+
+                          <div className="grid gap-2 text-right">
+                            <p className="text-xs font-medium">
+                              Team setup (seat 0/2 = Team A, seat 1/3 = Team B)
+                            </p>
+                            <p className="text-muted-foreground text-[11px]">
+                              Selecting an occupied seat swaps those two players.
+                            </p>
+                            {lobbyPlayers.map((player) => (
+                                <div
+                                  key={player.id}
+                                  className="border-border bg-background flex items-center justify-end gap-3 rounded-xl border px-2 py-1"
+                                >
+                                  <p className="text-xs text-right">
+                                    {player.name}
+                                    {player.isBot ? " (Bot)" : ""} • Team{" "}
+                                    {player.seatIndex % 2 === 0 ? "A" : "B"} • Seat{" "}
+                                    {player.seatIndex}
+                                  </p>
+                                  <select
+                                    value={String(player.seatIndex)}
+                                    onChange={(event) =>
+                                      sendAction("set-seat", {
+                                        targetPlayerId: player.id,
+                                        seatIndex: Number(event.target.value),
+                                      })
+                                    }
+                                    className="border-input bg-background h-8 rounded-md border px-2 text-xs"
+                                  >
+                                    <option value="0">Seat 0 (A)</option>
+                                    <option value="1">Seat 1 (B)</option>
+                                    <option value="2">Seat 2 (A)</option>
+                                    <option value="3">Seat 3 (B)</option>
+                                  </select>
+                                </div>
+                              ))}
+                          </div>
+
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              disabled={!canStartRoom}
+                              onClick={() => sendAction("start-room")}
+                            >
+                              Start Room
+                            </Button>
+                            {!canStartRoom ? (
+                              <p className="text-muted-foreground text-xs">
+                                Fill all 4 seats to start.
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground text-sm">
+                          Waiting for the room creator to configure teams and start
+                          the room.
+                        </p>
+                      )}
+                    </section>
                   )}
                 </>
               );
             })()}
           </>
         ) : (
-          <p className="text-muted-foreground text-sm">
-            Connecting to game room and waiting for initial state.
-          </p>
+          <div className="grid gap-2">
+            <p className="text-muted-foreground text-sm">
+              Connecting to game room and waiting for initial state.
+            </p>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button size="sm" onClick={() => manualReconnect()}>
+                Reconnect
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  navigate({
+                    search: (previous: EuchreSearch) => ({
+                      ...previous,
+                      step: "room",
+                    }),
+                  })
+                }
+              >
+                Back To Rooms
+              </Button>
+            </div>
+          </div>
         )}
       </section>
     </main>
@@ -1202,6 +1951,7 @@ export const Route = createFileRoute("/games/euchre")({
     name: readString(search.name),
     room: readString(search.room),
     password: readString(search.password),
+    autoJoin: parseBoolean(readString(search.autoJoin)),
   }),
   component: EuchreRouteComponent,
 });

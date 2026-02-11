@@ -237,6 +237,13 @@ function suitColorClass(suit: Suit) {
   return "text-slate-900";
 }
 
+function suitColorClassOnDark(suit: Suit) {
+  if (suit === "diamonds" || suit === "hearts") {
+    return "text-rose-300";
+  }
+  return "text-slate-100";
+}
+
 function sameColorSuit(suit: Suit): Suit {
   if (suit === "clubs") {
     return "spades";
@@ -1060,6 +1067,31 @@ function EuchreRouteComponent() {
       state.players.length === state.maxPlayers &&
       state.status === "waiting"
   );
+  const teamLabels = useMemo(() => {
+    if (!state) {
+      return {
+        0: "Team A",
+        1: "Team B",
+      } as const;
+    }
+
+    const buildLabel = (teamIndex: 0 | 1, fallback: string) => {
+      const names = state.players
+        .filter((player) => player.seatIndex % 2 === teamIndex)
+        .sort((left, right) => left.seatIndex - right.seatIndex)
+        .map((player) => player.name);
+
+      if (names.length === 0) {
+        return fallback;
+      }
+      return names.join(" & ");
+    };
+
+    return {
+      0: buildLabel(0, "Team A"),
+      1: buildLabel(1, "Team B"),
+    } as const;
+  }, [state]);
 
   if (search.step === "name") {
     return (
@@ -1339,7 +1371,7 @@ function EuchreRouteComponent() {
 
               return (
                 <>
-                  <div className="relative mx-auto w-full max-w-5xl rounded-[2rem] border border-emerald-900/35 bg-[radial-gradient(circle_at_50%_40%,#34d399_0%,#059669_48%,#064e3b_100%)] px-2 py-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_20px_40px_-20px_rgba(0,0,0,0.45)] min-h-[420px] sm:min-h-[500px] md:h-[70vh] md:max-h-[620px]">
+                  <div className="relative mx-auto w-full max-w-5xl rounded-3xl border border-emerald-900/35 bg-[radial-gradient(circle_at_50%_40%,#34d399_0%,#059669_48%,#064e3b_100%)] px-2 py-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_20px_40px_-20px_rgba(0,0,0,0.45)] min-h-[420px] sm:min-h-[500px] md:h-[70vh] md:max-h-[620px]">
                     <div className="absolute top-2 left-2 rounded-xl border border-white/30 bg-black/30 px-2 py-1 text-[11px] text-white backdrop-blur-sm sm:text-xs">
                       <p className="font-semibold">Room {state.roomName}</p>
                       <p>
@@ -1406,7 +1438,6 @@ function EuchreRouteComponent() {
                         (item) => item.seatIndex === seatIndex
                       );
                       const isTurnSeat = seatIndex === game?.turnSeat;
-                      const isDealerSeat = seatIndex === game?.dealerSeat;
                       const isSelf = player?.id === state.you?.id;
                       const isMaker = player?.id === game?.calledByPlayerId;
                       const isSittingOut = seatIndex === game?.sittingOutSeat;
@@ -1431,16 +1462,20 @@ function EuchreRouteComponent() {
                                     aria-hidden
                                   />
                                   {player.name}
-                                  {player.isBot ? " (Bot)" : ""}
                                 </p>
+                                {isSelf && game?.trump ? (
+                                  <p className="text-white/85">
+                                    Trump:{" "}
+                                    <span
+                                      className={`font-semibold ${suitColorClassOnDark(game.trump)}`}
+                                    >
+                                      {SUIT_SYMBOLS[game.trump]}{" "}
+                                      {SUIT_LABELS[game.trump]}
+                                    </span>
+                                  </p>
+                                ) : null}
                                 <p className="text-white/80">
-                                  {isDealerSeat ? "Dealer" : "Player"}
-                                </p>
-                                <p className="text-white/80">
-                                  Team {player.seatIndex % 2 === 0 ? "A" : "B"}{" "}
-                                  •{" "}
-                                  {isSittingOut ? "Sitting out" : `${player.handCount} cards`} •{" "}
-                                  {player.connected ? "Online" : "Offline"}
+                                  {isSittingOut ? "Sitting out" : `${player.handCount} cards`}
                                 </p>
                                 {isMaker && game?.trump ? (
                                   <p className="mt-1 inline-flex items-center justify-center gap-1 rounded-full border border-amber-200/60 bg-amber-300/20 px-2 py-0.5 text-[11px] font-semibold text-amber-100">
@@ -1448,8 +1483,13 @@ function EuchreRouteComponent() {
                                     {game.goingAlonePlayerId === player.id
                                       ? " (Alone)"
                                       : ""}{" "}
-                                    • {SUIT_SYMBOLS[game.trump]}{" "}
-                                    {SUIT_LABELS[game.trump]}
+                                    •{" "}
+                                    <span
+                                      className={suitColorClassOnDark(game.trump)}
+                                    >
+                                      {SUIT_SYMBOLS[game.trump]}{" "}
+                                      {SUIT_LABELS[game.trump]}
+                                    </span>
                                   </p>
                                 ) : null}
                               </>
@@ -1578,8 +1618,7 @@ function EuchreRouteComponent() {
 
                     <div className="absolute right-4 bottom-4 rounded-2xl border border-white/30 bg-black/30 p-2 text-white shadow-lg backdrop-blur-sm">
                       <p className="mt-1 text-xs text-white/85">
-                        Tricks: Team A {handTricksByTeam.teamA} - Team B{" "}
-                        {handTricksByTeam.teamB}
+                        Tricks: A {handTricksByTeam.teamA} - B {handTricksByTeam.teamB}
                       </p>
                     </div>
                   </div>
@@ -1591,12 +1630,12 @@ function EuchreRouteComponent() {
                   {game?.handSummary && !capturedTrick ? (
                     <section className="mt-2 rounded-2xl border border-amber-300/70 bg-amber-50 px-3 py-2 text-sm text-amber-950">
                       <p className="font-semibold">
-                        Hand Winner: Team{" "}
-                        {game.handSummary.awardedTo === 0 ? "A" : "B"} (+{game.handSummary.pointsAwarded})
+                        Hand Winner: {teamLabels[game.handSummary.awardedTo]} (+
+                        {game.handSummary.pointsAwarded})
                       </p>
                       <p className="text-xs">
-                        Maker team: {game.handSummary.makerTeam === 0 ? "A" : "B"} •
-                        Tricks {game.handSummary.makerTricks}-
+                        Makers: {teamLabels[game.handSummary.makerTeam]} • Tricks{" "}
+                        {game.handSummary.makerTricks}-
                         {game.handSummary.defenderTricks}
                       </p>
                     </section>
@@ -1706,9 +1745,8 @@ function EuchreRouteComponent() {
                           ) : null}
                           {game.handSummary ? (
                             <p className="text-muted-foreground text-xs">
-                              Team{" "}
-                              {game.handSummary.awardedTo === 0 ? "A" : "B"}{" "}
-                              earned {game.handSummary.pointsAwarded} point(s).
+                              {teamLabels[game.handSummary.awardedTo]} earned{" "}
+                              {game.handSummary.pointsAwarded} point(s).
                             </p>
                           ) : null}
                         </section>

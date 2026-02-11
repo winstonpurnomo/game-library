@@ -1864,6 +1864,14 @@ export class WebSocketHibernationServer extends DurableObject {
     return 1050;
   }
 
+  getDisconnectedPlayerThinkDelay() {
+    return 900;
+  }
+
+  getPostTrickPauseDelay(room: EuchreRoom) {
+    return Math.max(this.getBotThinkDelay(room), 2300);
+  }
+
   autoAdvanceOneTurn(room: EuchreRoom) {
     const { game } = room;
     if (!game) {
@@ -1940,22 +1948,40 @@ export class WebSocketHibernationServer extends DurableObject {
     );
   }
 
-  shouldDelayBeforeAutoAction(room: EuchreRoom) {
+  getAutoActionDelayMs(room: EuchreRoom) {
     const game = room.game;
     if (!game || game.phase === "game-over") {
-      return false;
+      return 0;
     }
 
     if (game.phase === "hand-over") {
-      return true;
+      return room.players.some((player) => player.isBot) ? 3600 : 0;
     }
 
     const currentPlayer = this.getSeatPlayer(room, game.turnSeat);
     if (!currentPlayer) {
-      return false;
+      return 0;
     }
 
-    return currentPlayer.isBot;
+    const isAutomatedActor = currentPlayer.isBot || !currentPlayer.connected;
+    if (!isAutomatedActor) {
+      return 0;
+    }
+
+    // Keep the completed-trick reveal visible before the next automated action.
+    if (
+      game.phase === "playing" &&
+      game.currentTrick.length === 0 &&
+      game.completedTricks.length > 0
+    ) {
+      return this.getPostTrickPauseDelay(room);
+    }
+
+    if (currentPlayer.isBot) {
+      return this.getBotThinkDelay(room);
+    }
+
+    return this.getDisconnectedPlayerThinkDelay();
   }
 
   async runAutoAdvance(roomName: string) {
@@ -1965,12 +1991,9 @@ export class WebSocketHibernationServer extends DurableObject {
         return;
       }
 
-      if (this.shouldDelayBeforeAutoAction(room)) {
-        if (room.game?.phase === "hand-over") {
-          await sleep(3600);
-        } else {
-          await sleep(this.getBotThinkDelay(room));
-        }
+      const delayMs = this.getAutoActionDelayMs(room);
+      if (delayMs > 0) {
+        await sleep(delayMs);
       }
 
       const acted = this.autoAdvanceOneTurn(room);

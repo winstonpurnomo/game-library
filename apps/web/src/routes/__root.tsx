@@ -1,6 +1,8 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
+import { ToastProvider } from "@/components/ui/toast";
+
 export function RootLayout() {
   return (
     <>
@@ -10,7 +12,9 @@ export function RootLayout() {
         </Link>{" "}
       </div>
       <hr />
-      <Outlet />
+      <ToastProvider>
+        <Outlet />
+      </ToastProvider>
       <TanStackRouterDevtools />
     </>
   );

@@ -60,6 +60,7 @@
   --color-game-counter-fg: var(--game-counter-fg);
   --shadow-game-card: var(--game-shadow-card);
   --shadow-game-floating: var(--game-shadow-floating);
+  --color-destructive-foreground: var(--destructive-foreground);
 }
 
 :root {
@@ -121,6 +122,7 @@
   --game-motion-fast: 100ms;
   --game-motion-base: 180ms;
   --game-motion-emphasis: 280ms;
+  --destructive-foreground: var(--color-red-700);
 }
 
 .dark {
@@ -171,6 +173,7 @@
   --game-shadow-card:
     0 1px 0 0 oklch(0.1 0.02 290 / 0.5), 0 16px 30px -18px oklch(0 0 0 / 0.64);
   --game-shadow-floating: 0 16px 45px -16px oklch(0 0 0 / 0.7);
+  --destructive-foreground: var(--color-red-400);
 }
 
 @layer base {

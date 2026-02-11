@@ -1,3 +1,14 @@
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  closestCenter,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -8,6 +19,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { toastManager } from "@/components/ui/toast";
 
 type Suit = "clubs" | "diamonds" | "hearts" | "spades";
 type Rank = "9" | "10" | "J" | "Q" | "K" | "A";
@@ -201,6 +213,7 @@ function parseBotDifficulty(value: string): BotDifficulty {
 }
 
 const CREATOR_ROOMS_STORAGE_KEY = "euchre-creator-room-tokens";
+const DISCONNECT_TOAST_ID = "euchre-disconnected";
 
 function getServerHttpOrigin() {
   const configured = import.meta.env.VITE_SERVER_URL?.trim();
@@ -414,6 +427,93 @@ function trickCaptureTargetClass(relativeSeat: number) {
   return "translate-x-18";
 }
 
+function parseDraggedPlayerId(activeId: string) {
+  if (!activeId.startsWith("player:")) {
+    return null;
+  }
+  return activeId.slice("player:".length);
+}
+
+function parseDropSeatId(overId: string) {
+  if (!overId.startsWith("seat:")) {
+    return null;
+  }
+  const seat = Number(overId.slice("seat:".length));
+  if (!Number.isInteger(seat) || seat < 0 || seat > 3) {
+    return null;
+  }
+  return seat;
+}
+
+function LobbyPlayerDraggable({ player }: { player: PlayerSnapshot }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({
+      id: `player:${player.id}`,
+    });
+
+  const style = transform
+    ? {
+        transform: `translate3d(${Math.round(transform.x)}px, ${Math.round(transform.y)}px, 0)`,
+      }
+    : undefined;
+
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      style={style}
+      className={[
+        "w-full rounded-lg border border-border bg-background px-2 py-1 text-left text-xs shadow-sm",
+        isDragging ? "opacity-40" : "",
+      ].join(" ")}
+      {...listeners}
+      {...attributes}
+    >
+      <p className="truncate font-medium">
+        {player.name}
+        {player.isBot ? " (Bot)" : ""}
+      </p>
+    </button>
+  );
+}
+
+function LobbySeatDropZone({
+  seatIndex,
+  player,
+}: {
+  seatIndex: number;
+  player: PlayerSnapshot | null;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `seat:${seatIndex}`,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={[
+        "rounded-xl border p-2 transition-colors",
+        isOver
+          ? "border-emerald-500 bg-emerald-50"
+          : "border-border bg-background/70",
+      ].join(" ")}
+    >
+      <p className="text-[11px] font-medium text-muted-foreground">
+        Seat {seatIndex} - Team {seatIndex % 2 === 0 ? "A" : "B"}
+      </p>
+      <div className="mt-1 min-h-10">
+        {player ? (
+          <LobbyPlayerDraggable player={player} />
+        ) : (
+          <div className="grid h-10 place-items-center rounded-lg border border-dashed border-border text-xs text-muted-foreground">
+            Open seat
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function EuchreRouteComponent() {
   const navigate = useNavigate({ from: "/games/euchre" });
   const search = Route.useSearch();
@@ -424,7 +524,7 @@ function EuchreRouteComponent() {
   const [statusText, setStatusText] = useState(
     "Complete setup to connect to multiplayer Euchre."
   );
-  const [connectionText, setConnectionText] = useState("Disconnected");
+  const [, setConnectionText] = useState("Disconnected");
   const [state, setState] = useState<RoomState | null>(null);
   const [connectVersion, setConnectVersion] = useState(0);
   const [creatorRoomTokens, setCreatorRoomTokens] = useState<
@@ -442,6 +542,9 @@ function EuchreRouteComponent() {
   } | null>(null);
   const [upcardPickupMoving, setUpcardPickupMoving] = useState(false);
   const [goAloneChoice, setGoAloneChoice] = useState(false);
+  const [activeLobbyDragPlayerId, setActiveLobbyDragPlayerId] = useState<
+    string | null
+  >(null);
   const capturedTrickKeyRef = useRef("");
   const upcardPickupKeyRef = useRef("");
   const reconnectTimerRef = useRef<number | null>(null);
@@ -464,7 +567,10 @@ function EuchreRouteComponent() {
   const persistCreatorTokens = useCallback((next: Record<string, string>) => {
     setCreatorRoomTokens(next);
     try {
-      window.localStorage.setItem(CREATOR_ROOMS_STORAGE_KEY, JSON.stringify(next));
+      window.localStorage.setItem(
+        CREATOR_ROOMS_STORAGE_KEY,
+        JSON.stringify(next)
+      );
     } catch {
       // Ignore storage failures.
     }
@@ -571,9 +677,9 @@ function EuchreRouteComponent() {
         );
 
         if (!response.ok) {
-          const payload = (await response.json().catch(() => null)) as
-            | { error?: string }
-            | null;
+          const payload = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
           setRoomListError(
             payload?.error ?? `Failed to delete room (${response.status}).`
           );
@@ -593,6 +699,7 @@ function EuchreRouteComponent() {
   );
 
   const disconnect = useCallback(() => {
+    toastManager.close(DISCONNECT_TOAST_ID);
     clearReconnectTimer();
     const ws = wsRef.current;
     if (ws) {
@@ -608,6 +715,20 @@ function EuchreRouteComponent() {
     setConnectionText("Connecting...");
     setConnectVersion((value) => value + 1);
   }, [resetReconnectState]);
+
+  const showDisconnectToast = useCallback(() => {
+    toastManager.add({
+      id: DISCONNECT_TOAST_ID,
+      type: "warning",
+      title: "Disconnected from room",
+      description: "Reconnect now or wait for auto reconnect.",
+      timeout: 0,
+      actionProps: {
+        children: "Reconnect",
+        onClick: () => manualReconnect(),
+      },
+    });
+  }, [manualReconnect]);
 
   useEffect(() => {
     refreshRooms();
@@ -703,6 +824,7 @@ function EuchreRouteComponent() {
         if (wsRef.current !== ws) {
           return;
         }
+        toastManager.close(DISCONNECT_TOAST_ID);
         resetReconnectState();
         setConnectionText("Connected");
         setStatusText("Connected to room.");
@@ -714,6 +836,7 @@ function EuchreRouteComponent() {
           return;
         }
         wsRef.current = null;
+        showDisconnectToast();
         setConnectionText("Disconnected");
         scheduleAutoReconnect();
         refreshRooms();
@@ -792,6 +915,7 @@ function EuchreRouteComponent() {
     connectVersion,
     resetReconnectState,
     scheduleAutoReconnect,
+    showDisconnectToast,
     search.mode,
     search.step,
     creatorTokenForCurrentRoom,
@@ -801,10 +925,13 @@ function EuchreRouteComponent() {
     trimmedRoom,
   ]);
 
-  useEffect(() => () => {
-    disconnect();
-    resetReconnectState();
-  }, [disconnect, resetReconnectState]);
+  useEffect(
+    () => () => {
+      disconnect();
+      resetReconnectState();
+    },
+    [disconnect, resetReconnectState]
+  );
 
   useEffect(() => {
     if (!state?.game || !state.you) {
@@ -825,8 +952,7 @@ function EuchreRouteComponent() {
       return;
     }
 
-    const latest =
-      state.game.completedTricks[state.game.completedTricks.length - 1];
+    const latest = state.game.completedTricks.at(-1);
     if (!latest) {
       setCapturedTrick(null);
       setCapturedTrickMoving(false);
@@ -849,8 +975,8 @@ function EuchreRouteComponent() {
     const cards = latest.cards
       .map((play) => {
         const seatIndex =
-          state.players.find((player) => player.id === play.playerId)?.seatIndex ??
-          -1;
+          state.players.find((player) => player.id === play.playerId)
+            ?.seatIndex ?? -1;
         return {
           seatIndex,
           card: play.card,
@@ -894,7 +1020,9 @@ function EuchreRouteComponent() {
     const inBidding =
       phase === "bidding-round-1" || phase === "bidding-round-2";
     const isMyBidTurn =
-      mySeatIndex !== undefined && turnSeat !== undefined && mySeatIndex === turnSeat;
+      mySeatIndex !== undefined &&
+      turnSeat !== undefined &&
+      mySeatIndex === turnSeat;
     if (!inBidding || !isMyBidTurn) {
       setGoAloneChoice(false);
     }
@@ -1027,13 +1155,6 @@ function EuchreRouteComponent() {
       }
     );
   }, [game]);
-  const connectionDotClass =
-    connectionText === "Connected"
-      ? "bg-emerald-500"
-      : connectionText === "Connecting..."
-        ? "bg-amber-400 animate-pulse"
-        : "bg-rose-500";
-
   const availableTrumpChoices = useMemo(() => {
     if (!game || game.phase !== "bidding-round-2") {
       return [] as Suit[];
@@ -1058,14 +1179,62 @@ function EuchreRouteComponent() {
       return left.name.localeCompare(right.name);
     });
   }, [state]);
+  const lobbyPlayersBySeat = useMemo(() => {
+    const bySeat = new Map<number, PlayerSnapshot>();
+    lobbyPlayers.forEach((player) => {
+      bySeat.set(player.seatIndex, player);
+    });
+    return bySeat;
+  }, [lobbyPlayers]);
+  const activeLobbyDragPlayer = useMemo(() => {
+    if (!activeLobbyDragPlayerId) {
+      return null;
+    }
+    return (
+      lobbyPlayers.find((player) => player.id === activeLobbyDragPlayerId) ??
+      null
+    );
+  }, [activeLobbyDragPlayerId, lobbyPlayers]);
+  const lobbyDndSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6,
+      },
+    })
+  );
+  const handleLobbyDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setActiveLobbyDragPlayerId(null);
+      const draggedPlayerId = parseDraggedPlayerId(String(event.active.id));
+      const droppedSeat = event.over
+        ? parseDropSeatId(String(event.over.id))
+        : null;
+      if (!draggedPlayerId || droppedSeat === null) {
+        return;
+      }
+
+      const draggedPlayer = lobbyPlayers.find(
+        (player) => player.id === draggedPlayerId
+      );
+      if (!draggedPlayer || draggedPlayer.seatIndex === droppedSeat) {
+        return;
+      }
+
+      sendAction("set-seat", {
+        targetPlayerId: draggedPlayer.id,
+        seatIndex: droppedSeat,
+      });
+    },
+    [lobbyPlayers, sendAction]
+  );
   const isCreator = Boolean(state?.you?.isCreator);
   const isLobby = Boolean(state && !game);
   const canStartRoom = Boolean(
     state &&
-      isLobby &&
-      isCreator &&
-      state.players.length === state.maxPlayers &&
-      state.status === "waiting"
+    isLobby &&
+    isCreator &&
+    state.players.length === state.maxPlayers &&
+    state.status === "waiting"
   );
   const teamLabels = useMemo(() => {
     if (!state) {
@@ -1124,9 +1293,12 @@ function EuchreRouteComponent() {
             />
           </label>
 
-          {search.autoJoin && search.mode === "join" && search.room.trim() !== "" ? (
+          {search.autoJoin &&
+          search.mode === "join" &&
+          search.room.trim() !== "" ? (
             <p className="text-muted-foreground text-sm">
-              Shared room detected: <span className="font-medium">{search.room}</span>
+              Shared room detected:{" "}
+              <span className="font-medium">{search.room}</span>
             </p>
           ) : null}
 
@@ -1371,7 +1543,12 @@ function EuchreRouteComponent() {
 
               return (
                 <>
-                  <div className="relative mx-auto w-full max-w-5xl rounded-3xl border border-emerald-900/35 bg-[radial-gradient(circle_at_50%_40%,#34d399_0%,#059669_48%,#064e3b_100%)] px-2 py-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_20px_40px_-20px_rgba(0,0,0,0.45)] min-h-[420px] sm:min-h-[500px] md:h-[70vh] md:max-h-[620px]">
+                  <div
+                    className={[
+                      "relative mx-auto w-full max-w-5xl rounded-3xl border border-emerald-900/35 bg-[radial-gradient(circle_at_50%_40%,#34d399_0%,#059669_48%,#064e3b_100%)] px-2 py-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_20px_40px_-20px_rgba(0,0,0,0.45)] min-h-[420px] sm:min-h-[500px] md:h-[70vh] md:max-h-[620px]",
+                      game ? "" : "hidden",
+                    ].join(" ")}
+                  >
                     <div className="absolute top-2 left-2 rounded-xl border border-white/30 bg-black/30 px-2 py-1 text-[11px] text-white backdrop-blur-sm sm:text-xs">
                       <p className="font-semibold">Room {state.roomName}</p>
                       <p>
@@ -1388,14 +1565,6 @@ function EuchreRouteComponent() {
                     </div>
 
                     <div className="absolute top-2 right-2 flex items-center gap-2">
-                      <div className="rounded-xl border border-white/30 bg-black/30 px-2 py-1 text-[11px] text-white backdrop-blur-sm sm:text-xs">
-                        <span className="inline-flex items-center gap-1.5">
-                          <span
-                            className={`inline-block size-2 rounded-full ${connectionDotClass}`}
-                          />
-                          {connectionText}
-                        </span>
-                      </div>
                       <Popover>
                         <PopoverTrigger
                           render={<Button size="sm" variant="secondary" />}
@@ -1440,6 +1609,8 @@ function EuchreRouteComponent() {
                       const isTurnSeat = seatIndex === game?.turnSeat;
                       const isSelf = player?.id === state.you?.id;
                       const isMaker = player?.id === game?.calledByPlayerId;
+                      const isDealer = seatIndex === game?.dealerSeat;
+                      const teamLabel = seatIndex % 2 === 0 ? "A" : "B";
                       const isSittingOut = seatIndex === game?.sittingOutSeat;
 
                       return (
@@ -1462,34 +1633,31 @@ function EuchreRouteComponent() {
                                     aria-hidden
                                   />
                                   {player.name}
-                                </p>
-                                {isSelf && game?.trump ? (
-                                  <p className="text-white/85">
-                                    Trump:{" "}
-                                    <span
-                                      className={`font-semibold ${suitColorClassOnDark(game.trump)}`}
-                                    >
-                                      {SUIT_SYMBOLS[game.trump]}{" "}
-                                      {SUIT_LABELS[game.trump]}
+                                  {isDealer ? (
+                                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-cyan-200/70 bg-cyan-300/20 px-1 text-[10px] font-bold text-cyan-100">
+                                      D
                                     </span>
-                                  </p>
-                                ) : null}
+                                  ) : null}
+                                </p>
                                 <p className="text-white/80">
-                                  {isSittingOut ? "Sitting out" : `${player.handCount} cards`}
+                                  {teamLabel} •{" "}
+                                  {isSittingOut
+                                    ? "Sitting out"
+                                    : `${player.handCount} cards`}
                                 </p>
                                 {isMaker && game?.trump ? (
                                   <p className="mt-1 inline-flex items-center justify-center gap-1 rounded-full border border-amber-200/60 bg-amber-300/20 px-2 py-0.5 text-[11px] font-semibold text-amber-100">
-                                    Maker
-                                    {game.goingAlonePlayerId === player.id
-                                      ? " (Alone)"
-                                      : ""}{" "}
-                                    •{" "}
                                     <span
-                                      className={suitColorClassOnDark(game.trump)}
+                                      className={suitColorClassOnDark(
+                                        game.trump
+                                      )}
                                     >
                                       {SUIT_SYMBOLS[game.trump]}{" "}
                                       {SUIT_LABELS[game.trump]}
                                     </span>
+                                    {game.goingAlonePlayerId === player.id
+                                      ? " • Alone"
+                                      : ""}
                                   </p>
                                 ) : null}
                               </>
@@ -1541,7 +1709,13 @@ function EuchreRouteComponent() {
                         ) : (
                           <div className="absolute inset-0 grid place-items-center text-center text-xs text-white/85">
                             <div>
-                              <p>{game ? "Waiting for trick lead" : "Lobby"}</p>
+                              <p>
+                                {game
+                                  ? game.phase === "playing"
+                                    ? ""
+                                    : "Waiting for trick lead"
+                                  : "Lobby"}
+                              </p>
                             </div>
                           </div>
                         )}
@@ -1552,76 +1726,119 @@ function EuchreRouteComponent() {
                           game?.phase === "hand-over" ||
                           game?.phase === "game-over") &&
                         (game?.currentTrick.length ?? 0) === 0 &&
-                        !upcardPickup ? (
-                          (() => {
-                            const winnerRelativeSeat =
-                              (capturedTrick.winnerSeat - mySeat + 4) % 4;
-                            return (
-                              <div
-                                className={[
-                                  "absolute inset-0 z-20 pointer-events-none transition-transform duration-700 ease-out",
-                                  capturedTrickMoving
-                                    ? trickCaptureTargetClass(winnerRelativeSeat)
-                                    : "",
-                                ].join(" ")}
-                              >
-                                {capturedTrick.cards.map((play) => {
-                                  const relativeSeat =
-                                    (play.seatIndex - mySeat + 4) % 4;
-                                  return (
-                                    <div
-                                      key={`${capturedTrick.handNumber}-${capturedTrick.trickIndex}-${play.seatIndex}-${play.card.id}`}
-                                      className={`absolute ${trickCardPositionClass(relativeSeat)}`}
-                                    >
-                                      <TableCard card={play.card} size="sm" />
-                                    </div>
-                                  );
-                                })}
-                                {capturedTrickShowWinner ? (
-                                  <p className="absolute inset-x-0 top-1 mx-auto w-max rounded-full border border-white/25 bg-black/75 px-2 py-1 text-center text-[11px] font-semibold text-white shadow-lg sm:text-xs">
-                                    Trick {capturedTrick.trickIndex + 1}:{" "}
-                                    {capturedTrick.winnerName}
-                                  </p>
-                                ) : null}
-                              </div>
-                            );
-                          })()
-                        ) : null}
+                        !upcardPickup
+                          ? (() => {
+                              const winnerRelativeSeat =
+                                (capturedTrick.winnerSeat - mySeat + 4) % 4;
+                              return (
+                                <div
+                                  className={[
+                                    "absolute inset-0 z-20 pointer-events-none transition-transform duration-700 ease-out",
+                                    capturedTrickMoving
+                                      ? trickCaptureTargetClass(
+                                          winnerRelativeSeat
+                                        )
+                                      : "",
+                                  ].join(" ")}
+                                >
+                                  {capturedTrick.cards.map((play) => {
+                                    const relativeSeat =
+                                      (play.seatIndex - mySeat + 4) % 4;
+                                    return (
+                                      <div
+                                        key={`${capturedTrick.handNumber}-${capturedTrick.trickIndex}-${play.seatIndex}-${play.card.id}`}
+                                        className={`absolute ${trickCardPositionClass(relativeSeat)}`}
+                                      >
+                                        <TableCard card={play.card} size="sm" />
+                                      </div>
+                                    );
+                                  })}
+                                  {capturedTrickShowWinner ? (
+                                    <p className="absolute inset-x-0 top-1 mx-auto w-max rounded-full border border-white/25 bg-black/75 px-2 py-1 text-center text-[11px] font-semibold text-white shadow-lg sm:text-xs">
+                                      Trick {capturedTrick.trickIndex + 1}:{" "}
+                                      {capturedTrick.winnerName}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              );
+                            })()
+                          : null}
 
                         {upcardPickup &&
                         mySeat >= 0 &&
                         !capturedTrick &&
                         (game?.phase === "dealer-discard" ||
                           game?.phase === "bidding-round-1" ||
-                          game?.phase === "bidding-round-2") ? (
-                          (() => {
-                            const dealerRelativeSeat =
-                              (upcardPickup.dealerSeat - mySeat + 4) % 4;
-                            return (
-                              <div
-                                className={[
-                                  "absolute inset-0 z-20 pointer-events-none transition-transform duration-700 ease-out",
-                                  upcardPickupMoving
-                                    ? trickCaptureTargetClass(dealerRelativeSeat)
-                                    : "",
-                                ].join(" ")}
-                              >
-                                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-                                  <TableCard card={upcardPickup.card} size="sm" />
+                          game?.phase === "bidding-round-2")
+                          ? (() => {
+                              const dealerRelativeSeat =
+                                (upcardPickup.dealerSeat - mySeat + 4) % 4;
+                              return (
+                                <div
+                                  className={[
+                                    "absolute inset-0 z-20 pointer-events-none transition-transform duration-700 ease-out",
+                                    upcardPickupMoving
+                                      ? trickCaptureTargetClass(
+                                          dealerRelativeSeat
+                                        )
+                                      : "",
+                                  ].join(" ")}
+                                >
+                                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+                                    <TableCard
+                                      card={upcardPickup.card}
+                                      size="sm"
+                                    />
+                                  </div>
                                 </div>
-                              </div>
-                            );
-                          })()
-                        ) : null}
+                              );
+                            })()
+                          : null}
                       </div>
                     </div>
 
                     <div className="absolute right-4 bottom-4 rounded-2xl border border-white/30 bg-black/30 p-2 text-white shadow-lg backdrop-blur-sm">
                       <p className="mt-1 text-xs text-white/85">
-                        Tricks: A {handTricksByTeam.teamA} - B {handTricksByTeam.teamB}
+                        Tricks: A {handTricksByTeam.teamA} - B{" "}
+                        {handTricksByTeam.teamB}
                       </p>
                     </div>
                   </div>
+
+                  {!game ? (
+                    <section className="mb-2 rounded-2xl border border-border/70 bg-background/70 px-3 py-2 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-muted-foreground text-xs">
+                          Room {state.roomName} • Bots {state.botCount} (
+                          {state.botDifficulty}) • Match A {state.score.team0} -
+                          B {state.score.team1}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => manualReconnect()}
+                          >
+                            Reconnect
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              navigate({
+                                search: (previous: EuchreSearch) => ({
+                                  ...previous,
+                                  step: "room",
+                                }),
+                              })
+                            }
+                          >
+                            Rooms
+                          </Button>
+                        </div>
+                      </div>
+                    </section>
+                  ) : null}
 
                   <div className="mt-2 rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
                     {statusText}
@@ -1634,8 +1851,8 @@ function EuchreRouteComponent() {
                         {game.handSummary.pointsAwarded})
                       </p>
                       <p className="text-xs">
-                        Makers: {teamLabels[game.handSummary.makerTeam]} • Tricks{" "}
-                        {game.handSummary.makerTricks}-
+                        Makers: {teamLabels[game.handSummary.makerTeam]} •
+                        Tricks {game.handSummary.makerTricks}-
                         {game.handSummary.defenderTricks}
                       </p>
                     </section>
@@ -1648,7 +1865,8 @@ function EuchreRouteComponent() {
                         {state.score.team0 >= state.targetScore ? "A" : "B"}
                       </p>
                       <p className="text-xs">
-                        Final score: A {state.score.team0} - B {state.score.team1}
+                        Final score: A {state.score.team0} - B{" "}
+                        {state.score.team1}
                       </p>
                     </section>
                   ) : null}
@@ -1738,7 +1956,9 @@ function EuchreRouteComponent() {
                           ) : null}
                           {game.phase === "game-over" ? (
                             <div className="flex justify-end">
-                              <Button onClick={() => sendAction("restart-match")}>
+                              <Button
+                                onClick={() => sendAction("restart-match")}
+                              >
                                 Restart Match
                               </Button>
                             </div>
@@ -1756,7 +1976,7 @@ function EuchreRouteComponent() {
                         <h3 className="text-base font-semibold">Your Hand</h3>
                         {state.you ? (
                           <div className="overflow-x-auto pb-2">
-                            <div className="mx-auto flex min-h-44 min-w-max items-end justify-center px-2 pt-2">
+                            <div className="mx-auto flex min-h-44 min-w-max items-end justify-center px-2">
                               {sortedMyHand.map((card, index) => {
                                 const canPlay = legalPlaySet.has(card.id);
                                 const playEnabled =
@@ -1836,6 +2056,22 @@ function EuchreRouteComponent() {
                           </p>
                         )}
                       </section>
+
+                      <section className="mt-2 rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs">
+                        <p className="font-medium">Teams</p>
+                        <p className="text-muted-foreground">
+                          Team A:{" "}
+                          <span className="text-foreground">
+                            {teamLabels[0]}
+                          </span>
+                        </p>
+                        <p className="text-muted-foreground">
+                          Team B:{" "}
+                          <span className="text-foreground">
+                            {teamLabels[1]}
+                          </span>
+                        </p>
+                      </section>
                     </>
                   ) : (
                     <section className="bg-background/75 border-border mt-3 rounded-2xl border p-3 grid gap-3 text-sm">
@@ -1843,7 +2079,8 @@ function EuchreRouteComponent() {
                         <h3 className="text-base font-semibold">Lobby</h3>
                         <div className="ml-auto flex items-center justify-end gap-2">
                           <p className="text-muted-foreground text-xs">
-                            {state.players.length}/{state.maxPlayers} seats filled
+                            {state.players.length}/{state.maxPlayers} seats
+                            filled
                           </p>
                           <Button
                             size="sm"
@@ -1858,7 +2095,10 @@ function EuchreRouteComponent() {
                       {state.you?.isCreator ? (
                         <div className="grid gap-3">
                           <div className="flex flex-wrap items-center justify-end gap-2">
-                            <Button size="sm" onClick={() => sendAction("add-bot")}>
+                            <Button
+                              size="sm"
+                              onClick={() => sendAction("add-bot")}
+                            >
                               Add Bot
                             </Button>
                             <Button
@@ -1888,41 +2128,80 @@ function EuchreRouteComponent() {
                             </label>
                           </div>
 
-                          <div className="grid gap-2 text-right">
+                          <div className="grid gap-2">
                             <p className="text-xs font-medium">
-                              Team setup (seat 0/2 = Team A, seat 1/3 = Team B)
+                              Drag players to seats to configure orientation and
+                              teams (seat 0/2 = Team A, seat 1/3 = Team B).
                             </p>
                             <p className="text-muted-foreground text-[11px]">
-                              Selecting an occupied seat swaps those two players.
+                              Dropping on an occupied seat swaps those players.
                             </p>
-                            {lobbyPlayers.map((player) => (
-                                <div
-                                  key={player.id}
-                                  className="border-border bg-background flex items-center justify-end gap-3 rounded-xl border px-2 py-1"
-                                >
-                                  <p className="text-xs text-right">
-                                    {player.name}
-                                    {player.isBot ? " (Bot)" : ""} • Team{" "}
-                                    {player.seatIndex % 2 === 0 ? "A" : "B"} • Seat{" "}
-                                    {player.seatIndex}
-                                  </p>
-                                  <select
-                                    value={String(player.seatIndex)}
-                                    onChange={(event) =>
-                                      sendAction("set-seat", {
-                                        targetPlayerId: player.id,
-                                        seatIndex: Number(event.target.value),
-                                      })
-                                    }
-                                    className="border-input bg-background h-8 rounded-md border px-2 text-xs"
-                                  >
-                                    <option value="0">Seat 0 (A)</option>
-                                    <option value="1">Seat 1 (B)</option>
-                                    <option value="2">Seat 2 (A)</option>
-                                    <option value="3">Seat 3 (B)</option>
-                                  </select>
+                            <DndContext
+                              sensors={lobbyDndSensors}
+                              collisionDetection={closestCenter}
+                              onDragStart={(event) =>
+                                setActiveLobbyDragPlayerId(
+                                  parseDraggedPlayerId(String(event.active.id))
+                                )
+                              }
+                              onDragCancel={() =>
+                                setActiveLobbyDragPlayerId(null)
+                              }
+                              onDragEnd={handleLobbyDragEnd}
+                            >
+                              <div className="mx-auto grid w-full max-w-xl grid-cols-3 grid-rows-3 gap-2">
+                                <div className="col-start-2 row-start-1">
+                                  <LobbySeatDropZone
+                                    seatIndex={2}
+                                    player={lobbyPlayersBySeat.get(2) ?? null}
+                                  />
                                 </div>
-                              ))}
+                                <div className="col-start-1 row-start-2">
+                                  <LobbySeatDropZone
+                                    seatIndex={1}
+                                    player={lobbyPlayersBySeat.get(1) ?? null}
+                                  />
+                                </div>
+                                <div className="col-start-2 row-start-2 grid place-items-center rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-3 text-center">
+                                  <p className="text-xs font-semibold text-emerald-900">
+                                    Table
+                                  </p>
+                                  <p className="text-[11px] text-emerald-800">
+                                    Drag players to seats
+                                  </p>
+                                </div>
+                                <div className="col-start-3 row-start-2">
+                                  <LobbySeatDropZone
+                                    seatIndex={3}
+                                    player={lobbyPlayersBySeat.get(3) ?? null}
+                                  />
+                                </div>
+                                <div className="col-start-2 row-start-3">
+                                  <LobbySeatDropZone
+                                    seatIndex={0}
+                                    player={lobbyPlayersBySeat.get(0) ?? null}
+                                  />
+                                </div>
+                              </div>
+                              <DragOverlay>
+                                {activeLobbyDragPlayer ? (
+                                  <div className="w-40 rounded-lg border border-border bg-background px-2 py-1 text-left text-xs shadow-md">
+                                    <p className="truncate font-medium">
+                                      {activeLobbyDragPlayer.name}
+                                      {activeLobbyDragPlayer.isBot
+                                        ? " (Bot)"
+                                        : ""}
+                                    </p>
+                                    <p className="text-[11px] text-muted-foreground">
+                                      Team{" "}
+                                      {activeLobbyDragPlayer.seatIndex % 2 === 0
+                                        ? "A"
+                                        : "B"}
+                                    </p>
+                                  </div>
+                                ) : null}
+                              </DragOverlay>
+                            </DndContext>
                           </div>
 
                           <div className="flex items-center justify-end gap-2">
@@ -1941,8 +2220,8 @@ function EuchreRouteComponent() {
                         </div>
                       ) : (
                         <p className="text-muted-foreground text-sm">
-                          Waiting for the room creator to configure teams and start
-                          the room.
+                          Waiting for the room creator to configure teams and
+                          start the room.
                         </p>
                       )}
                     </section>

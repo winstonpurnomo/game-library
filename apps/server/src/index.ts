@@ -1319,6 +1319,45 @@ export class WebSocketHibernationServer extends DurableObject {
     return totalScore / samples;
   }
 
+  shouldBotGoAlone(
+    room: EuchreRoom,
+    bot: PlayerState,
+    trump: Suit,
+    bidScore: number,
+    bidThreshold: number
+  ) {
+    if (bidScore < bidThreshold + 80) {
+      return false;
+    }
+
+    const trumpCards = bot.hand.filter(
+      (card) => effectiveSuit(card, trump) === trump
+    );
+    const trumpCount = trumpCards.length;
+    const hasRight = bot.hand.some((card) => isRightBower(card, trump));
+    const hasLeft = bot.hand.some((card) => isLeftBower(card, trump));
+    const hasAceTrump = bot.hand.some(
+      (card) => effectiveSuit(card, trump) === trump && card.rank === "A"
+    );
+    const premiumTrumpCount =
+      Number(hasRight) + Number(hasLeft) + Number(hasAceTrump);
+
+    if (room.botDifficulty === "hard") {
+      return (
+        trumpCount >= 3 &&
+        premiumTrumpCount >= 2 &&
+        (hasRight || hasLeft) &&
+        (hasRight || hasAceTrump)
+      );
+    }
+
+    if (room.botDifficulty === "medium") {
+      return trumpCount >= 3 && premiumTrumpCount >= 2 && (hasRight || hasLeft);
+    }
+
+    return trumpCount >= 3 && (hasRight || hasLeft);
+  }
+
   chooseBidAction(room: EuchreRoom, bot: PlayerState): BotAction {
     const game = room.game;
     if (!game) {
@@ -1335,7 +1374,7 @@ export class WebSocketHibernationServer extends DurableObject {
       if (strength >= threshold) {
         return {
           action: "order-up",
-          alone: strength >= threshold + 80,
+          alone: this.shouldBotGoAlone(room, bot, trump, strength, threshold),
         };
       }
       return { action: "pass" };
@@ -1362,7 +1401,13 @@ export class WebSocketHibernationServer extends DurableObject {
         return {
           action: "choose-trump",
           suit: bestSuit,
-          alone: bestScore >= threshold + 80,
+          alone: this.shouldBotGoAlone(
+            room,
+            bot,
+            bestSuit,
+            bestScore,
+            threshold
+          ),
         };
       }
 

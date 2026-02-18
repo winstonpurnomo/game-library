@@ -546,7 +546,11 @@ function EuchreRouteComponent() {
     string | null
   >(null);
   const capturedTrickKeyRef = useRef("");
+  const capturedTrickStartTimerRef = useRef<number | null>(null);
+  const capturedTrickWinnerTimerRef = useRef<number | null>(null);
+  const capturedTrickClearTimerRef = useRef<number | null>(null);
   const upcardPickupKeyRef = useRef("");
+  const upcardPickupDesyncKeyRef = useRef("");
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectStartedAtRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -609,6 +613,21 @@ function EuchreRouteComponent() {
     if (reconnectTimerRef.current !== null) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const clearCapturedTrickTimers = useCallback(() => {
+    if (capturedTrickStartTimerRef.current !== null) {
+      window.clearTimeout(capturedTrickStartTimerRef.current);
+      capturedTrickStartTimerRef.current = null;
+    }
+    if (capturedTrickWinnerTimerRef.current !== null) {
+      window.clearTimeout(capturedTrickWinnerTimerRef.current);
+      capturedTrickWinnerTimerRef.current = null;
+    }
+    if (capturedTrickClearTimerRef.current !== null) {
+      window.clearTimeout(capturedTrickClearTimerRef.current);
+      capturedTrickClearTimerRef.current = null;
     }
   }, []);
 
@@ -929,12 +948,15 @@ function EuchreRouteComponent() {
     () => () => {
       disconnect();
       resetReconnectState();
+      clearCapturedTrickTimers();
     },
-    [disconnect, resetReconnectState]
+    [clearCapturedTrickTimers, disconnect, resetReconnectState]
   );
 
   useEffect(() => {
     if (!state?.game || !state.you) {
+      clearCapturedTrickTimers();
+      capturedTrickKeyRef.current = "";
       setCapturedTrick(null);
       setCapturedTrickMoving(false);
       setCapturedTrickShowWinner(false);
@@ -946,6 +968,8 @@ function EuchreRouteComponent() {
       state.game.phase !== "hand-over" &&
       state.game.phase !== "game-over"
     ) {
+      clearCapturedTrickTimers();
+      capturedTrickKeyRef.current = "";
       setCapturedTrick(null);
       setCapturedTrickMoving(false);
       setCapturedTrickShowWinner(false);
@@ -954,6 +978,8 @@ function EuchreRouteComponent() {
 
     const latest = state.game.completedTricks.at(-1);
     if (!latest) {
+      clearCapturedTrickTimers();
+      capturedTrickKeyRef.current = "";
       setCapturedTrick(null);
       setCapturedTrickMoving(false);
       setCapturedTrickShowWinner(false);
@@ -967,6 +993,7 @@ function EuchreRouteComponent() {
       return;
     }
     capturedTrickKeyRef.current = key;
+    clearCapturedTrickTimers();
 
     const winnerName =
       state.players.find((player) => player.seatIndex === latest.winnerSeat)
@@ -994,24 +1021,21 @@ function EuchreRouteComponent() {
     setCapturedTrickMoving(false);
     setCapturedTrickShowWinner(false);
 
-    const startTimer = window.setTimeout(() => {
+    capturedTrickStartTimerRef.current = window.setTimeout(() => {
       setCapturedTrickMoving(true);
     }, 700);
-    const showWinnerTimer = window.setTimeout(() => {
+    capturedTrickWinnerTimerRef.current = window.setTimeout(() => {
       setCapturedTrickShowWinner(true);
     }, 1050);
-    const clearTimer = window.setTimeout(() => {
+    capturedTrickClearTimerRef.current = window.setTimeout(() => {
       setCapturedTrick(null);
       setCapturedTrickMoving(false);
       setCapturedTrickShowWinner(false);
+      capturedTrickStartTimerRef.current = null;
+      capturedTrickWinnerTimerRef.current = null;
+      capturedTrickClearTimerRef.current = null;
     }, 2200);
-
-    return () => {
-      window.clearTimeout(startTimer);
-      window.clearTimeout(showWinnerTimer);
-      window.clearTimeout(clearTimer);
-    };
-  }, [state]);
+  }, [clearCapturedTrickTimers, state]);
 
   useEffect(() => {
     const phase = state?.game?.phase;
@@ -1041,6 +1065,8 @@ function EuchreRouteComponent() {
       !currentGame.upcard ||
       !currentGame.calledByPlayerId
     ) {
+      setUpcardPickup(null);
+      setUpcardPickupMoving(false);
       return;
     }
 
@@ -1070,6 +1096,35 @@ function EuchreRouteComponent() {
       window.clearTimeout(clearTimer);
     };
   }, [state]);
+
+  useEffect(() => {
+    const currentGame = state?.game;
+    if (!currentGame || !upcardPickup) {
+      upcardPickupDesyncKeyRef.current = "";
+      return;
+    }
+
+    if (upcardPickup.handNumber === currentGame.handNumber) {
+      upcardPickupDesyncKeyRef.current = "";
+      return;
+    }
+
+    const desyncKey = `${currentGame.handNumber}-${upcardPickup.handNumber}-${upcardPickup.card.id}`;
+    if (upcardPickupDesyncKeyRef.current !== desyncKey) {
+      upcardPickupDesyncKeyRef.current = desyncKey;
+      console.warn("[euchre] recovered upcard pickup desync", {
+        roomName: state?.roomName ?? "unknown",
+        phase: currentGame.phase,
+        serverHandNumber: currentGame.handNumber,
+        pickupHandNumber: upcardPickup.handNumber,
+        serverUpcardId: currentGame.upcard?.id ?? null,
+        pickupCardId: upcardPickup.card.id,
+      });
+    }
+
+    setUpcardPickup(null);
+    setUpcardPickupMoving(false);
+  }, [state?.game, state?.roomName, upcardPickup]);
 
   const sendAction = useCallback(
     (
@@ -1114,6 +1169,10 @@ function EuchreRouteComponent() {
 
   const mySeat = state?.you?.seatIndex ?? -1;
   const game = state?.game;
+  const upcardPickupForCurrentHand =
+    upcardPickup && game && upcardPickup.handNumber === game.handNumber
+      ? upcardPickup
+      : null;
   const isMyTurn = game?.turnSeat === mySeat;
   const legalPlaySet = useMemo(
     () => new Set(state ? state.legalPlays : []),
@@ -1693,7 +1752,7 @@ function EuchreRouteComponent() {
                           })
                         ) : game &&
                           !capturedTrick &&
-                          !upcardPickup &&
+                          !upcardPickupForCurrentHand &&
                           (game.phase === "bidding-round-1" ||
                             game.phase === "bidding-round-2" ||
                             game.phase === "dealer-discard") &&
@@ -1726,7 +1785,7 @@ function EuchreRouteComponent() {
                           game?.phase === "hand-over" ||
                           game?.phase === "game-over") &&
                         (game?.currentTrick.length ?? 0) === 0 &&
-                        !upcardPickup
+                        !upcardPickupForCurrentHand
                           ? (() => {
                               const winnerRelativeSeat =
                                 (capturedTrick.winnerSeat - mySeat + 4) % 4;
@@ -1764,7 +1823,7 @@ function EuchreRouteComponent() {
                             })()
                           : null}
 
-                        {upcardPickup &&
+                        {upcardPickupForCurrentHand &&
                         mySeat >= 0 &&
                         !capturedTrick &&
                         (game?.phase === "dealer-discard" ||
@@ -1772,7 +1831,10 @@ function EuchreRouteComponent() {
                           game?.phase === "bidding-round-2")
                           ? (() => {
                               const dealerRelativeSeat =
-                                (upcardPickup.dealerSeat - mySeat + 4) % 4;
+                                (upcardPickupForCurrentHand.dealerSeat -
+                                  mySeat +
+                                  4) %
+                                4;
                               return (
                                 <div
                                   className={[
@@ -1786,7 +1848,7 @@ function EuchreRouteComponent() {
                                 >
                                   <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
                                     <TableCard
-                                      card={upcardPickup.card}
+                                      card={upcardPickupForCurrentHand.card}
                                       size="sm"
                                     />
                                   </div>
@@ -1948,6 +2010,7 @@ function EuchreRouteComponent() {
                           {game.phase === "hand-over" ? (
                             <div className="flex justify-end">
                               <Button
+                                disabled={Boolean(capturedTrick)}
                                 onClick={() => sendAction("start-next-hand")}
                               >
                                 Start Next Hand
@@ -1957,6 +2020,7 @@ function EuchreRouteComponent() {
                           {game.phase === "game-over" ? (
                             <div className="flex justify-end">
                               <Button
+                                disabled={Boolean(capturedTrick)}
                                 onClick={() => sendAction("restart-match")}
                               >
                                 Restart Match

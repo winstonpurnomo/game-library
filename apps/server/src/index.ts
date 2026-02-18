@@ -65,6 +65,7 @@ type EuchreGameState = {
   trickIndex: number;
   handSummary: HandSummary | null;
   handNumber: number;
+  handEndedAt: number | null;
 };
 
 type EuchreRoom = {
@@ -159,6 +160,7 @@ const SUITS: Suit[] = ["clubs", "diamonds", "hearts", "spades"];
 const ROOM_SIZE = 4;
 const TARGET_SCORE = 10;
 const ROOM_TTL_MS = 60 * 60 * 1000;
+const HAND_TRANSITION_MIN_DELAY_MS = 2200;
 const BOT_NAMES = [
   "Atlas",
   "Rook",
@@ -406,6 +408,9 @@ export class WebSocketHibernationServer extends DurableObject {
         player.isBot = player.isBot ?? false;
         player.connected = player.isBot;
       });
+      if (room.game && room.game.handEndedAt === undefined) {
+        room.game.handEndedAt = null;
+      }
     });
 
     this.sessions.forEach((session) => {
@@ -722,6 +727,7 @@ export class WebSocketHibernationServer extends DurableObject {
       trickIndex: 0,
       handSummary: null,
       handNumber: (room.game?.handNumber ?? 0) + 1,
+      handEndedAt: null,
     };
     room.updatedAt = Date.now();
   }
@@ -795,6 +801,7 @@ export class WebSocketHibernationServer extends DurableObject {
           : null;
 
     game.phase = winningTeam === null ? "hand-over" : "game-over";
+    game.handEndedAt = Date.now();
     const awardedLabel = awardedTo === 0 ? "A" : "B";
     if (winningTeam === null) {
       this.sendInfo(
@@ -1765,6 +1772,13 @@ export class WebSocketHibernationServer extends DurableObject {
       throw new Error("Next hand is only available after a hand ends.");
     }
 
+    if (
+      room.game.handEndedAt !== null &&
+      Date.now() - room.game.handEndedAt < HAND_TRANSITION_MIN_DELAY_MS
+    ) {
+      throw new Error("Please wait for the hand reveal to finish.");
+    }
+
     this.startNewHand(room, nextSeat(room.game.dealerSeat));
   }
 
@@ -1775,6 +1789,13 @@ export class WebSocketHibernationServer extends DurableObject {
 
     if (room.game.phase !== "game-over") {
       throw new Error("Restart is only available when the match is over.");
+    }
+
+    if (
+      room.game.handEndedAt !== null &&
+      Date.now() - room.game.handEndedAt < HAND_TRANSITION_MIN_DELAY_MS
+    ) {
+      throw new Error("Please wait for the hand reveal to finish.");
     }
 
     this.startNewHand(room, nextSeat(room.game.dealerSeat), true);

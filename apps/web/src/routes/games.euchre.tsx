@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { GameCard, GameCardMedia } from "@/components/ui/game-card";
+import { cn } from "@/lib/utils";
 import {
   Popover,
   PopoverContent,
@@ -365,7 +366,7 @@ function TableCard({ card, size = "md" }: { card: Card; size?: "sm" | "md" }) {
 
   return (
     <div
-      className={`${sizeClass} rounded-xl border border-slate-300 bg-white p-1 text-center shadow-xl`}
+      className={`${sizeClass} rounded-lg border border-slate-300 bg-white p-1 text-center shadow-xl`}
     >
       <p
         className={`text-xs leading-none font-semibold ${suitColorClass(card.suit)}`}
@@ -1591,7 +1592,7 @@ function EuchreRouteComponent() {
 
   return (
     <main className="mx-auto grid w-full max-w-6xl gap-3 p-2 sm:p-3 md:p-4">
-      <section className="bg-game-surface-1 border-border rounded-4xl border p-2 shadow-game-card sm:p-3 md:p-4">
+      <section className="bg-game-surface-1 border-border rounded-2xl border p-2 shadow-game-card sm:p-3 md:p-4">
         {state ? (
           <>
             {(() => {
@@ -1604,22 +1605,15 @@ function EuchreRouteComponent() {
                 <>
                   <div
                     className={[
-                      "relative mx-auto w-full max-w-5xl rounded-3xl border border-emerald-900/35 bg-[radial-gradient(circle_at_50%_40%,#34d399_0%,#059669_48%,#064e3b_100%)] px-2 py-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_20px_40px_-20px_rgba(0,0,0,0.45)] min-h-[420px] sm:min-h-[500px] md:h-[70vh] md:max-h-[620px]",
+                      "relative mx-auto w-full max-w-5xl rounded-xl border border-emerald-900/35 bg-[radial-gradient(circle_at_50%_40%,#34d399_0%,#059669_48%,#064e3b_100%)] px-2 py-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_20px_40px_-20px_rgba(0,0,0,0.45)] min-h-[360px] sm:min-h-[440px] md:h-[70vh] md:max-h-[620px]",
                       game ? "" : "hidden",
                     ].join(" ")}
                   >
-                    <div className="absolute top-2 left-2 rounded-xl border border-white/30 bg-black/30 px-2 py-1 text-[11px] text-white backdrop-blur-sm sm:text-xs">
-                      <p className="font-semibold">Room {state.roomName}</p>
-                      <p>
+                    <div className="absolute top-2 left-2 rounded-lg border border-white/30 bg-black/30 px-2 py-1 text-[11px] text-white backdrop-blur-sm sm:text-xs">
+                      <p className="font-semibold tabular-nums">
                         {game
-                          ? `Hand ${game.handNumber}`
+                          ? `Hand ${game.handNumber} · A ${state.score.team0}–B ${state.score.team1}`
                           : `Lobby ${state.players.length}/${state.maxPlayers}`}
-                      </p>
-                      <p>
-                        Bots: {state.botCount} ({state.botDifficulty})
-                      </p>
-                      <p>
-                        Match: A {state.score.team0} - B {state.score.team1}
                       </p>
                     </div>
 
@@ -1728,7 +1722,7 @@ function EuchreRouteComponent() {
                       );
                     })}
 
-                    <div className="mx-auto mt-20 h-54 w-54 rounded-full border border-white/30 bg-black/20 p-3 shadow-inner sm:mt-24 sm:h-62 sm:w-62 md:mt-32 md:h-64 md:w-64">
+                    <div className="mx-auto mt-16 h-54 w-54 rounded-full border border-white/30 bg-black/20 p-3 shadow-inner sm:mt-20 sm:h-62 sm:w-62 md:mt-28 md:h-64 md:w-64">
                       <div className="relative size-full rounded-full border border-white/25 bg-emerald-900/25">
                         {game?.currentTrick.length ? (
                           [0, 1, 2, 3].map((relativeSeat) => {
@@ -1860,9 +1854,8 @@ function EuchreRouteComponent() {
                     </div>
 
                     <div className="absolute right-4 bottom-4 rounded-2xl border border-white/30 bg-black/30 p-2 text-white shadow-lg backdrop-blur-sm">
-                      <p className="mt-1 text-xs text-white/85">
-                        Tricks: A {handTricksByTeam.teamA} - B{" "}
-                        {handTricksByTeam.teamB}
+                      <p className="mt-1 text-xs tabular-nums text-white/85">
+                        Tricks: A {handTricksByTeam.teamA}–B {handTricksByTeam.teamB}
                       </p>
                     </div>
                   </div>
@@ -1902,32 +1895,18 @@ function EuchreRouteComponent() {
                     </section>
                   ) : null}
 
-                  <div className="mt-2 rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                  <p className="mt-2 px-1 text-xs text-muted-foreground">
                     {statusText}
-                  </div>
-
-                  {game?.handSummary && !capturedTrick ? (
-                    <section className="mt-2 rounded-2xl border border-amber-300/70 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-                      <p className="font-semibold">
-                        Hand Winner: {teamLabels[game.handSummary.awardedTo]} (+
-                        {game.handSummary.pointsAwarded})
-                      </p>
-                      <p className="text-xs">
-                        Makers: {teamLabels[game.handSummary.makerTeam]} •
-                        Tricks {game.handSummary.makerTricks}-
-                        {game.handSummary.defenderTricks}
-                      </p>
-                    </section>
-                  ) : null}
+                  </p>
 
                   {game?.phase === "game-over" && !capturedTrick ? (
-                    <section className="mt-2 rounded-2xl border border-emerald-300/70 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
-                      <p className="font-semibold">
+                    <section className="mt-2 rounded-2xl border border-emerald-300/70 bg-emerald-50 px-3 py-2 text-emerald-950">
+                      <p className="text-sm font-semibold">
                         Match Winner: Team{" "}
                         {state.score.team0 >= state.targetScore ? "A" : "B"}
                       </p>
-                      <p className="text-xs">
-                        Final score: A {state.score.team0} - B{" "}
+                      <p className="text-xs tabular-nums">
+                        Final score: A {state.score.team0} – B{" "}
                         {state.score.team1}
                       </p>
                     </section>
@@ -1940,70 +1919,80 @@ function EuchreRouteComponent() {
                         game.phase === "dealer-discard" ||
                         game.phase === "hand-over" ||
                         game.phase === "game-over") && (
-                        <section className="bg-background/75 border-border mt-3 rounded-2xl border p-3 grid gap-2 text-sm">
-                          <h3 className="text-base font-semibold">Actions</h3>
+                        <section className="bg-background/75 border-border mt-2 rounded-2xl border p-3 grid gap-2 text-sm">
+                          <div className="flex items-center justify-between gap-2">
+                            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Actions</h3>
+                            {game.handSummary ? (
+                              <p className="text-muted-foreground text-xs">
+                                {teamLabels[game.handSummary.awardedTo]} +{game.handSummary.pointsAwarded} pt
+                              </p>
+                            ) : null}
+                          </div>
                           {(game.phase === "bidding-round-1" ||
                             game.phase === "bidding-round-2") && (
                             <>
-                              <p>
+                              <p className="text-sm">
                                 {isMyTurn
                                   ? "Your turn to bid."
                                   : `Waiting for ${currentTurnPlayerName ?? "player"} to bid.`}
                               </p>
-                              {isMyTurn ? (
-                                <label className="inline-flex items-center justify-end gap-2 text-xs">
-                                  <span>Go alone</span>
-                                  <input
-                                    type="checkbox"
-                                    checked={goAloneChoice}
-                                    onChange={(event) =>
-                                      setGoAloneChoice(event.target.checked)
-                                    }
-                                  />
-                                </label>
-                              ) : null}
-                              <div className="flex flex-wrap justify-end gap-2">
-                                <Button
-                                  variant="secondary"
-                                  disabled={!isMyTurn}
-                                  onClick={() => sendAction("pass")}
-                                >
-                                  Pass
-                                </Button>
-                                {game.phase === "bidding-round-1" ? (
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                {isMyTurn ? (
+                                  <label className="inline-flex items-center gap-2 text-sm cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={goAloneChoice}
+                                      onChange={(event) =>
+                                        setGoAloneChoice(event.target.checked)
+                                      }
+                                      className="size-4"
+                                    />
+                                    <span>Go alone</span>
+                                  </label>
+                                ) : <span />}
+                                <div className="flex flex-wrap gap-2">
                                   <Button
+                                    variant="secondary"
                                     disabled={!isMyTurn}
-                                    onClick={() =>
-                                      sendAction("order-up", {
-                                        alone: goAloneChoice,
-                                      })
-                                    }
+                                    onClick={() => sendAction("pass")}
                                   >
-                                    Order Up
+                                    Pass
                                   </Button>
-                                ) : (
-                                  availableTrumpChoices.map((suit) => (
+                                  {game.phase === "bidding-round-1" ? (
                                     <Button
-                                      key={suit}
                                       disabled={!isMyTurn}
                                       onClick={() =>
-                                        sendAction("choose-trump", {
-                                          suit,
+                                        sendAction("order-up", {
                                           alone: goAloneChoice,
                                         })
                                       }
                                     >
-                                      Call {SUIT_LABELS[suit]}
+                                      Order Up
                                     </Button>
-                                  ))
-                                )}
+                                  ) : (
+                                    availableTrumpChoices.map((suit) => (
+                                      <Button
+                                        key={suit}
+                                        disabled={!isMyTurn}
+                                        onClick={() =>
+                                          sendAction("choose-trump", {
+                                            suit,
+                                            alone: goAloneChoice,
+                                          })
+                                        }
+                                      >
+                                        Call {SUIT_LABELS[suit]}
+                                      </Button>
+                                    ))
+                                  )}
+                                </div>
                               </div>
                             </>
                           )}
                           {game.phase === "dealer-discard" ? (
-                            <p>
+                            <p className="text-sm">
                               {isMyTurn
-                                ? "Dealer: choose one card to discard."
+                                ? "Dealer: tap a card below to discard."
                                 : "Waiting for dealer to discard."}
                             </p>
                           ) : null}
@@ -2027,20 +2016,14 @@ function EuchreRouteComponent() {
                               </Button>
                             </div>
                           ) : null}
-                          {game.handSummary ? (
-                            <p className="text-muted-foreground text-xs">
-                              {teamLabels[game.handSummary.awardedTo]} earned{" "}
-                              {game.handSummary.pointsAwarded} point(s).
-                            </p>
-                          ) : null}
                         </section>
                       )}
 
-                      <section className="mt-3 grid gap-2">
-                        <h3 className="text-base font-semibold">Your Hand</h3>
+                      <section className="mt-2 grid gap-1">
+                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Your Hand</h3>
                         {state.you ? (
-                          <div className="overflow-x-auto pb-2">
-                            <div className="mx-auto flex min-h-44 min-w-max items-end justify-center px-2">
+                          <div className="overflow-x-auto overflow-y-visible">
+                            <div className="mx-auto flex min-h-36 min-w-max items-end justify-center px-2 py-3">
                               {sortedMyHand.map((card, index) => {
                                 const canPlay = legalPlaySet.has(card.id);
                                 const playEnabled =
@@ -2060,7 +2043,7 @@ function EuchreRouteComponent() {
                                   <button
                                     key={card.id}
                                     type="button"
-                                    className="first:ml-0 -ml-6 cursor-pointer transition-transform hover:z-10 hover:-translate-y-2 disabled:cursor-default disabled:hover:translate-y-0"
+                                    className="first:ml-0 -ml-6 cursor-pointer transition-transform hover:z-10 hover:-translate-y-2 active:scale-95 disabled:cursor-default disabled:hover:translate-y-0 disabled:active:scale-100"
                                     disabled={!cardEnabled}
                                     onClick={() => {
                                       if (game.phase === "dealer-discard") {
@@ -2083,7 +2066,7 @@ function EuchreRouteComponent() {
                                         cardEnabled ? "active" : "default"
                                       }
                                       className={[
-                                        "w-20 bg-white p-2",
+                                        "w-18 sm:w-20 bg-white p-1.5 sm:p-2",
                                         cardEnabled
                                           ? "border-2 border-emerald-500 ring-2 ring-emerald-300"
                                           : "border border-slate-300",
@@ -2121,21 +2104,6 @@ function EuchreRouteComponent() {
                         )}
                       </section>
 
-                      <section className="mt-2 rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs">
-                        <p className="font-medium">Teams</p>
-                        <p className="text-muted-foreground">
-                          Team A:{" "}
-                          <span className="text-foreground">
-                            {teamLabels[0]}
-                          </span>
-                        </p>
-                        <p className="text-muted-foreground">
-                          Team B:{" "}
-                          <span className="text-foreground">
-                            {teamLabels[1]}
-                          </span>
-                        </p>
-                      </section>
                     </>
                   ) : (
                     <section className="bg-background/75 border-border mt-3 rounded-2xl border p-3 grid gap-3 text-sm">

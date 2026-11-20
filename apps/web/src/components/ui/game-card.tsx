@@ -79,7 +79,7 @@ function GameCardMedia({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="game-card-media"
       className={cn(
-        "bg-game-surface-3 relative overflow-hidden rounded-2xl",
+        "bg-game-surface-3 relative overflow-hidden rounded-lg",
         "aspect-[3/4] group-data-[orientation=horizontal]/game-card:row-span-2 group-data-[orientation=horizontal]/game-card:aspect-[4/5] group-data-[orientation=horizontal]/game-card:w-32",
         className
       )}

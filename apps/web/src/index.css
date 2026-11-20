@@ -65,7 +65,7 @@
 
 :root {
   --radius: 0.625rem;
-  --game-radius-card: calc(var(--radius) + 10px);
+  --game-radius-card: calc(var(--radius) + 4px);
   --game-radius-chip: calc(var(--radius) + 999px);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
